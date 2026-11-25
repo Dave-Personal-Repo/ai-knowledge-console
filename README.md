@@ -13,6 +13,20 @@ npm start
 
 Environment overrides: `PORT`, `HOST`, `KB_ROOT`, `KB_SENSITIVE_ROOT`.
 
+## Docker
+
+Follows the same shape as `auto-review-pr-bot`: non-root runtime, optional `env_file`, read-only mounts, healthcheck.
+
+```bash
+make build
+make up
+# http://127.0.0.1:4310
+```
+
+Compose mounts the two hub clones read-only at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, your GitHub login from `~/.config/gh` at `/run/gh`, and the host's verified-login cache from `~/.local/state/kb` at `/run/kb-state`. The entrypoint copies the login into the container home (root only, then drops to UID 1001) because `hosts.yml` is mode 600 on the host. Reusing the host cache matters: `kb` accepts a login proven by GitHub within the last 24 hours, and a fresh `gh api user` call is only needed after that. Alternatively, put a working `GH_TOKEN=...` in `.secret/credentials.env`. `KB_IDENTITY` is a claimed login only; it grants nothing without verification.
+
+`make health` checks `/api/session`, `make logs` follows the container, `make down` stops it. Copy `.env.example` to `.env` to change the host port or bind address. The container never writes to the knowledge or state mounts.
+
 ## Access model
 
 - Every API request calls `kb whoami` in the canonical clone and accepts only `SUPER_OWNER` or `CODE_OWNER`.
@@ -37,8 +51,10 @@ No editing, no write API, no billing, no public signup, no multi-tenancy and no 
 ## Layout
 
 ```
-server.js          zero-dependency HTTP server, auth gate, inventory API
-public/index.html  application shell
-public/styles.css  design system, layout, animation, responsive rules
-public/app.js      hash router, views, Markdown renderer, command palette
+server.js            zero-dependency HTTP server, auth gate, inventory API
+public/              application shell, design system, router and renderer
+Dockerfile           node:22 runtime with git, gh, python3, curl and gosu
+docker-entrypoint.sh host gh login overlay, then drops to UID 1001
+docker-compose.yml   read-only hub mounts, loopback port, state volume
+Makefile             build/up/down/logs/health/check
 ```

@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.secret
+node_modules
+.DS_Store
+*.log
+data
+graphify-out
+README.md

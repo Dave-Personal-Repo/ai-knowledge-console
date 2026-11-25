@@ -79,7 +79,10 @@ function getSession(force = false) {
     const privilege = /-\s*Privilege Level:\s*(\S+)/.exec(output)?.[1] || '-';
     next = { login: user, role, privilege, allowed: ALLOWED_ROLES.has(role) };
   } catch (error) {
-    next = {
+    // A transient GitHub/licence failure must not lock the console out for the whole TTL.
+    sessionCache = null;
+    sessionCachedAt = 0;
+    return {
       login: 'unknown',
       role: 'UNAVAILABLE',
       privilege: '-',

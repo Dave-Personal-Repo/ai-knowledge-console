@@ -1,0 +1,37 @@
+name: ai-knowledge-console
+
+services:
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-knowledge-console:latest
+    container_name: ai-knowledge-console
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 10s
+
+    # Optional: put GH_TOKEN=github_pat_... here (gitignored) instead of mounting gh login.
+    env_file:
+      - path: .secret/credentials.env
+        required: false
+
+    # Bound to loopback because the UI shows owner-only knowledge.
+    ports:
+      - "${KCONSOLE_BIND_IP:-127.0.0.1}:${KCONSOLE_PORT:-4310}:4310"
+
+    environment:
+      # Claimed login; the container still requires a GitHub-verified login before any role is granted.
+      KB_IDENTITY: ${KB_IDENTITY:-dave-bfi}
+      # Reuse the host's verified-login cache so a stale gh token does not lock the console out.
+      KB_STATE: /run/kb-state
+      TZ: ${TZ:-UTC}
+
+    volumes:
+      # Read-only: the console never writes knowledge.
+      - ${HOME}/knowledge/ai-knowledge:/knowledge/ai-knowledge:ro
+      - ${HOME}/knowledge/ai-knowledge-sensitive:/knowledge/ai-knowledge-sensitive:ro
+      # Host gh login (mode 600) is copied into the container by the entrypoint.
+      - ${HOME}/.config/gh:/run/gh:ro
+      # kb reads the verified login the host already proved (and refreshes it on the host).
+      - ${HOME}/.local/state/kb:/run/kb-state:ro
