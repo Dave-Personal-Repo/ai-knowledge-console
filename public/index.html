@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Owner-gated console for the AI knowledge hub" />
+    <title>AI Knowledge Console</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="aurora" aria-hidden="true">
+      <span class="orb orb-a"></span>
+      <span class="orb orb-b"></span>
+      <span class="orb orb-c"></span>
+      <span class="grid-plane"></span>
+    </div>
+
+    <div class="app-shell">
+      <div class="scrim" id="scrim" hidden></div>
+
+      <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span class="brand-core"></span>
+          </div>
+          <div class="brand-copy">
+            <strong>Knowledge<span>OS</span></strong>
+            <small>AI HUB CONSOLE</small>
+          </div>
+        </div>
+
+        <div class="sidebar-section-label">Workspace</div>
+        <nav class="nav" id="nav">
+          <a class="nav-item" href="#/dashboard" data-route="dashboard">
+            <span class="nav-icon" data-icon="grid"></span>
+            <span>Overview</span>
+            <span class="nav-shortcut">1</span>
+          </a>
+          <a class="nav-item" href="#/library" data-route="library">
+            <span class="nav-icon" data-icon="book"></span>
+            <span>Knowledge</span>
+            <span class="nav-count" id="nav-knowledge-count">0</span>
+          </a>
+          <a class="nav-item" href="#/policies" data-route="policies">
+            <span class="nav-icon" data-icon="shield"></span>
+            <span>Rules &amp; policies</span>
+            <span class="nav-count" id="nav-policy-count">0</span>
+          </a>
+          <a class="nav-item" href="#/access" data-route="access">
+            <span class="nav-icon" data-icon="users"></span>
+            <span>Access &amp; roles</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-section-label">System</div>
+        <nav class="nav">
+          <a class="nav-item" href="#/about" data-route="about">
+            <span class="nav-icon" data-icon="settings"></span>
+            <span>About this console</span>
+          </a>
+        </nav>
+
+        <div class="sidebar-spacer"></div>
+
+        <div class="integrity-card">
+          <div class="integrity-top">
+            <span class="pulse-dot"></span>
+            <span>Live hub link</span>
+          </div>
+          <p id="integrity-text">Checking canonical repository…</p>
+          <div class="integrity-bar"><i id="integrity-bar"></i></div>
+        </div>
+
+        <button class="identity" id="identity" type="button" aria-label="Show session details">
+          <span class="avatar" id="avatar">??</span>
+          <span class="identity-copy">
+            <strong id="identity-name">Connecting…</strong>
+            <small id="identity-role">checking role</small>
+          </span>
+          <span class="nav-icon" data-icon="chevron"></span>
+        </button>
+      </aside>
+
+      <div class="workspace">
+        <header class="topbar">
+          <button class="icon-button menu-button" id="menu-button" type="button" aria-label="Toggle navigation">
+            <span class="nav-icon" data-icon="menu"></span>
+          </button>
+
+          <button class="search-trigger" id="search-trigger" type="button">
+            <span class="nav-icon" data-icon="search"></span>
+            <span>Search knowledge, rules, policies…</span>
+            <kbd>⌘ K</kbd>
+          </button>
+
+          <div class="topbar-actions">
+            <span class="role-chip" id="role-chip"><i></i><span>Verifying</span></span>
+            <button class="icon-button" id="refresh-button" type="button" aria-label="Reload knowledge">
+              <span class="nav-icon" data-icon="refresh"></span>
+            </button>
+            <button class="icon-button" id="theme-button" type="button" aria-label="Toggle theme">
+              <span class="nav-icon" data-icon="moon"></span>
+            </button>
+          </div>
+        </header>
+
+        <main class="view" id="view" tabindex="-1">
+          <div class="loading-state">
+            <div class="skeleton skeleton-hero"></div>
+            <div class="skeleton-grid">
+              <div class="skeleton skeleton-card"></div>
+              <div class="skeleton skeleton-card"></div>
+              <div class="skeleton skeleton-card"></div>
+              <div class="skeleton skeleton-card"></div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <div class="palette" id="palette" hidden>
+      <div class="palette-backdrop" data-close-palette></div>
+      <div class="palette-panel" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div class="palette-input-row">
+          <span class="nav-icon" data-icon="search"></span>
+          <input id="palette-input" type="search" placeholder="Search the hub…" autocomplete="off" />
+          <kbd>ESC</kbd>
+        </div>
+        <div class="palette-results" id="palette-results"></div>
+        <div class="palette-footer">
+          <span><kbd>↑</kbd><kbd>↓</kbd> navigate</span>
+          <span><kbd>↵</kbd> open</span>
+          <span><kbd>esc</kbd> close</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
