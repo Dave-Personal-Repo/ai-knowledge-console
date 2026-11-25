@@ -394,6 +394,7 @@ function buildInventory() {
 
   const membersFile = readJson(path.join(KB_ROOT, 'members/members.json'));
   const rbacFile = readJson(path.join(KB_ROOT, 'config/rbac.json'));
+  const hubConfig = readJson(path.join(KB_ROOT, 'config/kb.json'));
   const members = (membersFile?.members || []).map((member) => ({
     login: member.github || member.id,
     display: member.display || member.id || member.github,
@@ -430,6 +431,7 @@ function buildInventory() {
     members,
     permissionCounts,
     roleScopes,
+    knownScopes: Array.isArray(hubConfig?.known_scopes) ? hubConfig.known_scopes : [],
     sensitiveCategories: rbacFile?.sensitive_categories || [],
     sensitivePrefixes: rbacFile?.sensitive_path_prefixes || [],
   };
@@ -529,7 +531,11 @@ function readJsonBody(request) {
   });
 }
 
-function publicCommand(command) {
+function publicCommand(command, sessionRole) {
+  const roleOptions = sessionRole === 'CODE_OWNER' ? [...CODE_OWNER_TARGET_ROLES] : ROLES;
+  const fields = (command.fields || []).map((entry) => (
+    entry.name === 'role' ? { ...entry, options: roleOptions } : entry
+  ));
   return {
     id: command.id,
     label: command.label,
@@ -537,7 +543,7 @@ function publicCommand(command) {
     description: command.description,
     mutating: Boolean(command.mutating),
     targetAction: command.targetAction || null,
-    fields: command.fields || [],
+    fields,
   };
 }
 
@@ -554,7 +560,7 @@ const server = http.createServer(async (request, response) => {
 
     try {
       if (pathname === '/api/inventory') return json(response, 200, filterInventoryForRole(buildInventory(), session.role));
-      if (pathname === '/api/commands') return json(response, 200, { commands: COMMANDS.map(publicCommand) });
+      if (pathname === '/api/commands') return json(response, 200, { commands: COMMANDS.map((command) => publicCommand(command, session.role)) });
       if (request.method === 'POST' && pathname.startsWith('/api/commands/')) {
         const id = decodeURIComponent(pathname.slice('/api/commands/'.length));
         const command = COMMANDS.find((item) => item.id === id);
@@ -599,6 +605,7 @@ module.exports = {
   buildArgv,
   validateValues,
   assertTargetAllowed,
+  buildInventory,
   browserCommand,
   shouldOpenBrowser,
   handleServerError,

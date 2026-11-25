@@ -902,6 +902,16 @@ html[data-theme="light"] .filter-chip.active { color: #fff; }
 .toc button:hover { color: var(--accent-2); border-color: var(--accent-2); transform: translateX(2px); }
 .toc button.nested { padding-left: 20px; font-size: 10.5px; }
 
+.split-view { display: grid; grid-template-columns: minmax(280px, 36%) minmax(0, 1fr); gap: 18px; align-items: start; height: calc(100vh - 150px); min-height: 520px; }
+.split-list, .split-reader { min-width: 0; height: 100%; overflow-y: auto; padding-right: 6px; }
+.split-list-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 2px 2px 14px; }
+.split-list-head h3 { margin: 0; font-size: 15px; }
+.split-list-head span { font-size: 10px; color: var(--text-muted); }
+.split-list .toolbar { grid-template-columns: 1fr; gap: 10px; }
+.split-list .doc-grid { grid-template-columns: 1fr; }
+.split-reader .reader-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.split-reader .toc { position: static; }
+
 /* ---------- Access ---------- */
 
 .access-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; margin-bottom: 24px; }
@@ -935,6 +945,33 @@ html[data-theme="light"] .filter-chip.active { color: #fff; }
 .scope-block h4 { margin: 0 0 10px; font-size: 12px; color: var(--text-soft); }
 .scope-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow-y: auto; }
 .tag.verified { color: var(--success); border-color: rgba(52,211,153,.28); background: rgba(52,211,153,.08); }
+
+.member-dialog, .command-dialog, .role-dialog {
+  width: min(780px, calc(100vw - 32px));
+  max-height: min(86vh, 920px);
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 18px;
+  background: var(--bg-soft);
+  color: var(--text);
+  box-shadow: 0 30px 90px rgba(2, 5, 14, .62);
+  overflow: auto;
+}
+.member-dialog::backdrop, .command-dialog::backdrop, .role-dialog::backdrop { background: rgba(3, 6, 14, .72); backdrop-filter: blur(8px); }
+.member-dialog .dialog-close, .command-dialog .dialog-close, .role-dialog .dialog-close { position: sticky; top: 12px; left: calc(100% - 48px); z-index: 2; font-size: 20px; line-height: 1; }
+.member-dialog-body, .command-dialog-body, .role-dialog-body { padding: 22px 26px 28px; }
+.member-dialog-body .dialog-head, .command-dialog-body .dialog-head, .role-dialog-body .dialog-head { padding-right: 44px; margin-bottom: 20px; }
+.member-dialog-body .dialog-head h3, .command-dialog-body .dialog-head h3, .role-dialog-body .dialog-head h3 { margin: 4px 0 4px; font-size: 20px; letter-spacing: -.02em; }
+.member-dialog-body .dialog-head p, .command-dialog-body .dialog-head p, .role-dialog-body .dialog-head p { margin: 0; font-size: 11.5px; color: var(--text-muted); }
+.member-dialog-body .command-grid, .command-dialog .command-grid { grid-template-columns: 1fr; }
+.member-dialog-body .scope-custom[hidden] { display: none; }
+.role-dialog { width: min(520px, calc(100vw - 32px)); }
+.permission-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.permission-list li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.permission-list code { font-size: 11px; color: var(--text-soft); }
+.role-card .ghost-button { margin-top: 14px; }
+.compact-command { display: flex; flex-direction: column; }
+.compact-command .command-actions { margin-top: auto; padding-top: 14px; }
 
 /* ---------- Hub operations ---------- */
 
@@ -1115,6 +1152,11 @@ html[data-theme="light"] .filter-chip.active { color: #fff; }
 /* ---------- Responsive ---------- */
 
 .scrim { position: fixed; inset: 0; background: rgba(3,6,14,.6); z-index: 25; animation: fade-in .2s ease; }
+
+@media (max-width: 1000px) {
+  .split-view { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .split-list, .split-reader { height: auto; overflow: visible; padding-right: 0; }
+}
 
 @media (max-width: 1180px) {
   .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

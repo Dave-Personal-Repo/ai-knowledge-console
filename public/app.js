@@ -32,6 +32,7 @@ const state = {
   commands: [],
   results: {},
   detailLogin: null,
+  openDoc: null,
   paletteOpen: false,
   paletteIndex: 0,
   paletteMatches: [],
@@ -41,6 +42,13 @@ const view = document.getElementById('view');
 const palette = document.getElementById('palette');
 const paletteInput = document.getElementById('palette-input');
 const paletteResults = document.getElementById('palette-results');
+const memberDialog = document.getElementById('member-dialog');
+const memberDialogBody = document.getElementById('member-dialog-body');
+const commandDialog = document.getElementById('command-dialog');
+const commandDialogBody = document.getElementById('command-dialog-body');
+const roleDialog = document.getElementById('role-dialog');
+const roleDialogBody = document.getElementById('role-dialog-body');
+const SCOPE_PATTERN = /^(?:(?:company|federated):[A-Za-z0-9._-]+|project:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)$/;
 
 function iconSvg(name) {
   return `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ICONS.file}</svg>`;
@@ -134,9 +142,15 @@ function openDoc(id) {
   navigate(`doc/${encodeURIComponent(id)}`);
 }
 
-function markNav(name) {
+function docSection(id) {
+  const item = (state.inventory?.items || []).find((entry) => entry.id === id);
+  return item?.kind === 'policy' ? 'policies' : 'library';
+}
+
+function markNav(name, id) {
+  const section = name === 'doc' ? docSection(id) : name;
   document.querySelectorAll('.nav-item[data-route]').forEach((item) => {
-    item.classList.toggle('active', item.dataset.route === name || (name === 'doc' && item.dataset.route === 'library'));
+    item.classList.toggle('active', item.dataset.route === section);
   });
 }
 
@@ -173,6 +187,7 @@ function bars(entries, total) {
 function renderDashboard() {
   const { counts, items } = state.inventory;
   const members = state.inventory.members.filter((member) => member.status === 'active');
+  const roles = Object.keys(state.inventory.roleScopes || state.inventory.permissionCounts || {});
   const recent = [...items]
     .filter((item) => item.status === 'verified' || item.status === 'approved')
     .sort((a, b) => String(b.lastVerifiedAt || b.createdAt).localeCompare(String(a.lastVerifiedAt || a.createdAt)))
@@ -230,12 +245,12 @@ function renderDashboard() {
 
     <div class="section-title"><h3>Active owners</h3><span>${members.length} active members in the canonical roster</span></div>
     <section class="access-grid">
-      ${['SUPER_OWNER', 'CODE_OWNER'].map((role, index) => {
+      ${roles.map((role, index) => {
         const list = members.filter((member) => member.role === role);
         return `<div class="role-card" style="animation-delay:${index * 0.08}s">
           <span class="role-number">${list.length}</span>
-          <div class="role-icon">${icon(role === 'SUPER_OWNER' ? 'lock' : 'shield')}</div>
-          <h4>${role.replace('_', ' ')}</h4>
+          <div class="role-icon">${icon(role.includes('SUPER') ? 'lock' : role.includes('CODE') ? 'shield' : 'users')}</div>
+          <h4>${esc(role.replace('_', ' '))}</h4>
           <p>${list.length ? esc(list.map((member) => member.login).join(', ')) : 'No active account'}</p>
         </div>`;
       }).join('')}
@@ -266,7 +281,7 @@ function filteredItems(forceKind) {
   return items;
 }
 
-function renderLibrary(forceKind) {
+function renderLibrary(forceKind, compact = false) {
   const categories = [...new Set(state.inventory.items.map((item) => item.category))].sort();
   const items = filteredItems(forceKind);
   const shown = state.showAll ? items : items.slice(0, 72);
@@ -276,10 +291,10 @@ function renderLibrary(forceKind) {
     : 'One idea per document, with status, evidence and provenance kept beside the reading.';
 
   return `
-    <header class="page-head">
+    ${compact ? '' : `<header class="page-head">
       <div><span class="eyebrow">Canonical hub</span><h1>${title}</h1><p>${subtitle}</p></div>
       <button class="ghost-button" data-action="open-palette">${icon('command')} Command palette</button>
-    </header>
+    </header>`}
 
     <section class="toolbar">
       <label class="search-field">${icon('search')}<input id="library-search" type="search" placeholder="Search titles, summaries, tags, paths…" value="${esc(state.filters.query)}" /></label>
@@ -420,58 +435,85 @@ function renderMarkdown(source) {
 }
 
 async function renderDoc(id) {
-  view.innerHTML = '<div class="loading-state"><div class="skeleton skeleton-hero"></div></div>';
+  const previousScroll = view.querySelector('.split-list')?.scrollTop || 0;
+  const section = docSection(id);
   try {
-    const separator = id.indexOf(':');
-    const source = id.slice(0, separator);
-    const docPath = id.slice(separator + 1);
-    const document = await api(`/api/document?source=${encodeURIComponent(source)}&path=${encodeURIComponent(docPath)}`);
-    const rendered = renderMarkdown(document.body);
-    const meta = document.meta;
-
-    view.innerHTML = `
-      <div class="reader-layout">
-        <article class="reader-main">
-          <div class="breadcrumb">
-            <button data-action="go-library">Library</button><span>/</span><span>${esc(document.sourceLabel)}</span><span>/</span><span>${esc(docPath)}</span>
-          </div>
-          <h1>${esc(document.title)}</h1>
-          <p class="reader-summary">${esc(meta.summary || 'Read the full document below.')}</p>
-          <div class="meta-strip">
-            <span class="badge ${['verified', 'approved'].includes(meta.status) ? 'verified' : meta.status === 'proposed' ? 'proposed' : ''}">${esc(meta.status)}</span>
-            <span class="meta-item"><strong>Category</strong> ${esc(meta.category || '—')}</span>
-            ${document.source === 'sensitive' ? '<span class="badge sensitive">restricted</span>' : ''}
-            ${meta.lastVerifiedAt ? `<span class="meta-item"><strong>Verified</strong> ${esc(meta.lastVerifiedAt)}</span>` : ''}
-            ${meta.createdAt ? `<span class="meta-item"><strong>Created</strong> ${esc(meta.createdAt)}</span>` : ''}
-            ${(meta.tags || []).map((tag) => `<span class="tag">${esc(tag)}</span>`).join('')}
-          </div>
-          ${meta.verifiedBy ? `<blockquote><strong>Evidence:</strong> ${esc(meta.verifiedBy)}</blockquote>` : ''}
-          <div class="markdown">${rendered.html}</div>
-          <div style="margin-top:34px;display:flex;gap:10px;flex-wrap:wrap">
-            <button class="ghost-button" data-action="copy-link">${icon('copy')} Copy link</button>
-            <button class="ghost-button" data-action="go-library">${icon('arrow-left')} Back to library</button>
-          </div>
-        </article>
-        <aside class="toc">
-          <h4>On this page</h4>
-          ${rendered.headings.length ? rendered.headings.map((heading) => `<button type="button" data-toc="${esc(heading.id)}" class="${heading.level > 2 ? 'nested' : ''}">${esc(heading.text)}</button>`).join('') : '<div style="font-size:11px;color:var(--text-muted)">No headings in this document.</div>'}
-          ${meta.source ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted)">Source: ${esc(meta.source)}</div>` : ''}
-        </aside>
-      </div>`;
+    if (!state.openDoc || state.openDoc.id !== id) {
+      view.innerHTML = '<div class="loading-state"><div class="skeleton skeleton-hero"></div></div>';
+      const separator = id.indexOf(':');
+      const source = id.slice(0, separator);
+      const docPath = id.slice(separator + 1);
+      const document = await api(`/api/document?source=${encodeURIComponent(source)}&path=${encodeURIComponent(docPath)}`);
+      const rendered = renderMarkdown(document.body);
+      const meta = document.meta;
+      state.openDoc = {
+        id,
+        html: `
+          <div class="reader-layout">
+            <article class="reader-main">
+              <div class="breadcrumb">
+                <button data-action="go-back">${section === 'policies' ? 'Rules & policies' : 'Library'}</button><span>/</span><span>${esc(document.sourceLabel)}</span><span>/</span><span>${esc(docPath)}</span>
+              </div>
+              <h1>${esc(document.title)}</h1>
+              <p class="reader-summary">${esc(meta.summary || 'Read the full document below.')}</p>
+              <div class="meta-strip">
+                <span class="badge ${['verified', 'approved'].includes(meta.status) ? 'verified' : meta.status === 'proposed' ? 'proposed' : ''}">${esc(meta.status)}</span>
+                <span class="meta-item"><strong>Category</strong> ${esc(meta.category || '—')}</span>
+                ${document.source === 'sensitive' ? '<span class="badge sensitive">restricted</span>' : ''}
+                ${meta.lastVerifiedAt ? `<span class="meta-item"><strong>Verified</strong> ${esc(meta.lastVerifiedAt)}</span>` : ''}
+                ${meta.createdAt ? `<span class="meta-item"><strong>Created</strong> ${esc(meta.createdAt)}</span>` : ''}
+                ${(meta.tags || []).map((tag) => `<span class="tag">${esc(tag)}</span>`).join('')}
+              </div>
+              ${meta.verifiedBy ? `<blockquote><strong>Evidence:</strong> ${esc(meta.verifiedBy)}</blockquote>` : ''}
+              <div class="markdown">${rendered.html}</div>
+              <div style="margin-top:34px;display:flex;gap:10px;flex-wrap:wrap">
+                <button class="ghost-button" data-action="copy-link">${icon('copy')} Copy link</button>
+                <button class="ghost-button" data-action="go-back">${icon('arrow-left')} Back to list</button>
+              </div>
+            </article>
+            <aside class="toc">
+              <h4>On this page</h4>
+              ${rendered.headings.length ? rendered.headings.map((heading) => `<button type="button" data-toc="${esc(heading.id)}" class="${heading.level > 2 ? 'nested' : ''}">${esc(heading.text)}</button>`).join('') : '<div style="font-size:11px;color:var(--text-muted)">No headings in this document.</div>'}
+              ${meta.source ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border);font-size:10px;color:var(--text-muted)">Source: ${esc(meta.source)}</div>` : ''}
+            </aside>
+          </div>`,
+      };
+    }
+    view.innerHTML = `<div class="split-view">
+      <section class="split-list">
+        <div class="split-list-head"><h3>${section === 'policies' ? 'Rules & policies' : 'Knowledge'}</h3><span>Choose another document</span></div>
+        ${renderLibrary(section === 'policies' ? 'policy' : undefined, true)}
+      </section>
+      <section class="split-reader">${state.openDoc.html}</section>
+    </div>`;
+    const list = view.querySelector('.split-list');
+    if (list) list.scrollTop = previousScroll;
   } catch (error) {
+    state.openDoc = null;
     view.innerHTML = stateBox('x', 'Could not open that document', error.message);
   }
 }
 
 const ROLE_RANK = { SUPER_OWNER: 4, CODE_OWNER: 3, COLLABORATOR: 2, MEMBER: 1 };
 
-function commandField(spec, options = spec.options) {
+function commandField(spec, fieldOptions = {}) {
   const label = esc(spec.label);
   if (spec.type === 'boolean') {
     return `<label class="field-row check"><input type="checkbox" name="${esc(spec.name)}" ${spec.default ? 'checked' : ''}/><span>${label}</span></label>`;
   }
+  if (spec.name === 'scope' && Array.isArray(fieldOptions.scopeOptions)) {
+    const options = fieldOptions.scopeOptions;
+    return `<label class="field-row"><span>${label}</span>
+      <select name="scope" data-scope-select>
+        <option value="">Choose a scope…</option>
+        ${options.map((option) => `<option value="${esc(option)}">${esc(option)}</option>`).join('')}
+        <option value="__other">Other…</option>
+      </select>
+      <input class="scope-custom" data-scope-custom type="text" name="scope-custom" placeholder="${esc(spec.placeholder || 'company:my-team')}" hidden/>
+    </label>`;
+  }
   if (spec.type === 'enum') {
-    return `<label class="field-row"><span>${label}</span><select name="${esc(spec.name)}">${(options || []).map((option) => `<option value="${esc(option)}" ${option === spec.default ? 'selected' : ''}>${esc(option.replace('_', ' '))}</option>`).join('')}</select></label>`;
+    return `<label class="field-row"><span>${label}</span><select name="${esc(spec.name)}">${(spec.options || []).map((option) => `<option value="${esc(option)}" ${option === spec.default ? 'selected' : ''}>${esc(option.replace('_', ' '))}</option>`).join('')}</select></label>`;
   }
   const type = spec.type === 'date' ? 'date' : spec.type === 'number' ? 'number' : 'text';
   const placeholder = spec.placeholder ? ` placeholder="${esc(spec.placeholder)}"` : '';
@@ -490,7 +532,7 @@ function commandForm(command, options = {}) {
     <p>${esc(command.description)}</p>
     <div class="field-grid">
       ${options.login ? `<input type="hidden" name="login" value="${esc(options.login)}"/>` : ''}
-      ${fields.filter((spec) => spec.name !== 'login' || !options.login).map((spec) => commandField(spec)).join('')}
+      ${fields.filter((spec) => spec.name !== 'login' || !options.login).map((spec) => commandField(spec, spec.name === 'scope' && Array.isArray(options.scopeOptions) ? { scopeOptions: options.scopeOptions } : {})).join('')}
     </div>
     ${command.mutating ? `<label class="confirm-row"><input type="checkbox" name="confirm"/><span>I understand this command changes the hub.</span></label>` : ''}
     <div class="command-actions"><button class="primary-button" type="submit">${icon('command')} Run ${esc(command.label)}</button></div>
@@ -517,16 +559,6 @@ function renderAccess() {
     COLLABORATOR: 'Contributes by pull request and reads authorised knowledge.',
     MEMBER: 'Read-only access to general knowledge through the CLI.',
   };
-  const detail = members.find((member) => member.login === state.detailLogin);
-  const canAct = detail && (state.session.role === 'SUPER_OWNER' || (ROLE_RANK[detail.role] || 0) <= ROLE_RANK.COLLABORATOR);
-  const actions = canAct
-    ? state.commands.filter((command) => {
-      if (!command.targetAction) return false;
-      if (detail.status === 'active') return command.id !== 'memberReinstate';
-      return detail.status === 'suspended' && command.id === 'memberReinstate';
-    })
-    : [];
-  const scopes = detail ? roleScopes[detail.role] || [] : [];
 
   return `
     <header class="page-head">
@@ -540,6 +572,7 @@ function renderAccess() {
         <div class="role-icon">${icon(role.includes('SUPER') ? 'lock' : role.includes('CODE') ? 'shield' : 'users')}</div>
         <h4>${esc(role.replace('_', ' '))}</h4>
         <p>${esc(descriptions[role] || 'Custom role.')}</p>
+        <button class="ghost-button" type="button" data-role-perms="${esc(role)}">View permissions</button>
       </div>`).join('')}
     </section>
 
@@ -551,13 +584,6 @@ function renderAccess() {
       </table>
     </section>
 
-    ${detail ? `<div class="section-title"><h3>${esc(detail.login)}</h3><span>${esc(detail.role.replace('_', ' '))} · ${esc(detail.status)}</span></div>
-    <section class="panel detail-panel">
-      <div class="scope-block"><h4>Role scopes (${scopes.length})</h4><div class="scope-list">${scopes.map((scope) => `<span class="tag">${esc(scope)}</span>`).join('') || '<span class="results-meta">No scopes recorded.</span>'}</div></div>
-      <div class="scope-block"><h4>Extra member scopes (${detail.scopes.length})</h4><div class="scope-list">${detail.scopes.map((scope) => `<span class="tag ${scope.startsWith('company:') ? 'verified' : ''}">${esc(scope)}</span>`).join('') || '<span class="results-meta">No extra scopes.</span>'}</div></div>
-      ${actions.length ? `<div class="command-grid">${actions.map((command) => commandForm(command, { login: detail.login })).join('')}</div>` : '<p class="results-meta">No changes available for this member in the current session.</p>'}
-    </section>` : ''}
-
     <div class="section-title"><h3>Sensitive surface</h3><span>Why this console is owner-only</span></div>
     <section class="panel-grid">
       <div class="panel"><h4>Protected categories</h4><div class="mini-list">${(state.inventory.sensitiveCategories || []).map((category) => `<div class="mini-item"><span class="dot"></span><span>${esc(category)}</span></div>`).join('')}</div></div>
@@ -568,6 +594,122 @@ function renderAccess() {
 
 function scopesCount(member, roleScopes) {
   return (roleScopes[member.role] || []).length + member.scopes.length;
+}
+
+async function refreshInventory() {
+  state.inventory = await api('/api/inventory');
+  state.openDoc = null;
+  return state.inventory;
+}
+
+async function refreshMemberAfterCommand(login) {
+  await refreshInventory();
+  showMemberDialog(login);
+}
+
+function clearTargetResults() {
+  for (const command of state.commands) {
+    if (command.targetAction) delete state.results[command.id];
+  }
+}
+
+function anyDialogOpen() {
+  return ['member-dialog', 'command-dialog', 'role-dialog'].some((id) => document.getElementById(id)?.open);
+}
+
+function bindDialog(dialog, closeFn) {
+  dialog.addEventListener('click', (event) => {
+    if (event.target.closest('[data-action^="close-"]') || event.target === dialog) closeFn();
+  });
+  dialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeFn();
+  });
+  dialog.addEventListener('submit', (event) => {
+    const form = event.target.closest('form[data-command]');
+    if (!form) return;
+    event.preventDefault();
+    runCommand(form);
+  });
+}
+
+function openCommandDialog(commandId) {
+  const command = state.commands.find((item) => item.id === commandId);
+  if (!command) return;
+  commandDialogBody.innerHTML = `
+    <div class="dialog-head">
+      <span class="eyebrow">Hub operations</span>
+      <h3 id="command-dialog-title">${esc(command.label)}</h3>
+      <p>${esc(command.description)}</p>
+    </div><div class="command-grid">${commandForm(command)}</div>`;
+  if (!commandDialog.open) commandDialog.showModal();
+}
+
+function closeCommandDialog() {
+  if (commandDialog.open) commandDialog.close();
+}
+
+function openRoleDialog(role) {
+  const permissions = state.inventory.roleScopes?.[role];
+  if (!Array.isArray(permissions)) return;
+  const label = role.replace('_', ' ');
+  roleDialogBody.innerHTML = `
+    <div class="dialog-head">
+      <span class="eyebrow">Role permissions</span>
+      <h3 id="role-dialog-title">${esc(label)}</h3>
+      <p>${permissions.length} permission${permissions.length === 1 ? '' : 's'} visible in this session.</p>
+    </div>
+    <ul class="permission-list">${[...permissions].sort().map((permission) => `<li><span class="dot"></span><code>${esc(permission)}</code></li>`).join('')}</ul>`;
+  if (!roleDialog.open) roleDialog.showModal();
+}
+
+function closeRoleDialog() {
+  if (roleDialog.open) roleDialog.close();
+}
+
+function showMemberDialog(login) {
+  const detail = (state.inventory.members || []).find((member) => member.login === login);
+  if (!detail) {
+    closeMemberDialog();
+    toast('That member is no longer available in this session');
+    return;
+  }
+  if (state.detailLogin !== login) clearTargetResults();
+  const scopes = state.inventory.roleScopes?.[detail.role] || [];
+  const canAct = state.session.role === 'SUPER_OWNER' || (ROLE_RANK[detail.role] || 0) <= ROLE_RANK.COLLABORATOR;
+  const actions = canAct
+    ? state.commands.filter((command) => {
+      if (!command.targetAction) return false;
+      if (detail.status === 'active') return command.id !== 'memberReinstate';
+      return detail.status === 'suspended' && command.id === 'memberReinstate';
+    })
+    : [];
+  const knownScopes = (state.inventory.knownScopes || []).filter((scope) => SCOPE_PATTERN.test(scope));
+  const scopeOptions = (command) => {
+    if (command.id === 'memberGrant') return knownScopes.filter((scope) => !detail.scopes.includes(scope));
+    if (command.id === 'memberUngrant') return [...new Set([...detail.scopes, ...knownScopes])];
+    return null;
+  };
+
+  memberDialogBody.innerHTML = `
+    <div class="dialog-head">
+      <span class="eyebrow">Member access</span>
+      <h3 id="member-dialog-title">${esc(detail.login)}</h3>
+      <p>${esc(detail.display)} · ${esc(detail.role.replace('_', ' '))} · ${esc(detail.status)}${detail.joined ? ` · joined ${esc(detail.joined)}` : ''}</p>
+    </div>
+    <section class="panel detail-panel">
+      <div class="scope-block"><h4>Role scopes (${scopes.length})</h4><div class="scope-list">${scopes.map((scope) => `<span class="tag">${esc(scope)}</span>`).join('') || '<span class="results-meta">No scopes recorded.</span>'}</div></div>
+      <div class="scope-block"><h4>Extra member scopes (${detail.scopes.length})</h4><div class="scope-list">${detail.scopes.map((scope) => `<span class="tag ${scope.startsWith('company:') ? 'verified' : ''}">${esc(scope)}</span>`).join('') || '<span class="results-meta">No extra scopes.</span>'}</div></div>
+      ${actions.length ? `<div class="command-grid">${actions.map((command) => commandForm(command, { login: detail.login, scopeOptions: scopeOptions(command) })).join('')}</div>` : '<p class="results-meta">No changes available for this member in the current session.</p>'}
+    </section>`;
+  state.detailLogin = login;
+  if (!memberDialog.open) memberDialog.showModal();
+}
+
+function closeMemberDialog() {
+  clearTargetResults();
+  state.detailLogin = null;
+  if (memberDialog.open) memberDialog.close();
 }
 
 function renderOperations() {
@@ -583,7 +725,11 @@ function renderOperations() {
     ${groups.map((group) => {
       const commands = state.commands.filter((command) => command.group === group.key);
       return `<div class="section-title"><h3>${group.title}</h3><span>${group.text}</span></div>
-        <section class="command-grid">${commands.map((command) => commandForm(command)).join('') || stateBox('command', 'No commands available', 'The command catalog could not be loaded.')}</section>`;
+        <section class="command-grid">${commands.map((command) => `<article class="command-card compact-command">
+          <div class="command-card-head"><h4>${esc(command.label)}</h4><span class="badge ${command.mutating ? 'proposed' : 'policy'}">${command.mutating ? 'changes hub' : 'read only'}</span></div>
+          <p>${esc(command.description)}</p>
+          <div class="command-actions"><button class="primary-button" type="button" data-open-command="${esc(command.id)}">${icon('command')} Open</button></div>
+        </article>`).join('') || stateBox('command', 'No commands available', 'The command catalog could not be loaded.')}</section>`;
     }).join('')}`;
 }
 
@@ -592,7 +738,10 @@ function formValues(form, command) {
   const values = {};
   for (const spec of command.fields || []) {
     if (spec.type === 'boolean') values[spec.name] = data.has(spec.name);
-    else if (data.has(spec.name)) values[spec.name] = String(data.get(spec.name));
+    else if (spec.name === 'scope' && form.querySelector('[data-scope-select]')) {
+      const choice = String(data.get('scope') || '');
+      values.scope = choice === '__other' ? String(data.get('scope-custom') || '').trim() : choice;
+    } else if (data.has(spec.name)) values[spec.name] = String(data.get(spec.name));
   }
   values.confirm = data.has('confirm');
   return values;
@@ -606,6 +755,10 @@ async function runCommand(form) {
     toast(`Tick the confirmation box before running ${command.label}`, 'error');
     return;
   }
+  if ((command.fields || []).some((spec) => spec.name === 'scope') && !values.scope) {
+    toast('Choose a scope or enter a custom one', 'error');
+    return;
+  }
 
   const button = form.querySelector('button[type="submit"]');
   button.disabled = true;
@@ -613,6 +766,13 @@ async function runCommand(form) {
     const result = await post(`/api/commands/${encodeURIComponent(command.id)}`, { values });
     state.results[command.id] = result;
     toast(result.ok ? `${command.label} completed` : `${command.label} exited ${result.exitCode}`, result.ok ? 'info' : 'error');
+    if (result.ok && command.mutating) {
+      if (form.closest('#member-dialog')) await refreshMemberAfterCommand(values.login);
+      else {
+        await refreshInventory();
+        render();
+      }
+    }
   } catch (error) {
     state.results[command.id] = {
       ok: false,
@@ -677,7 +837,7 @@ function renderDenied() {
 
 function render() {
   const route = parseRoute();
-  markNav(route.name);
+  markNav(route.name, route.id);
   if (!state.session?.allowed) {
     view.innerHTML = renderDenied();
     return;
@@ -729,6 +889,7 @@ async function load(force = false) {
   view.innerHTML = '<div class="loading-state"><div class="skeleton skeleton-hero"></div><div class="skeleton-grid"><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div><div class="skeleton skeleton-card"></div></div></div>';
   try {
     state.session = await api(`/api/session${force ? '?fresh=1' : ''}`);
+    state.openDoc = null;
     updateIdentity();
     if (state.session.allowed) {
       const [inventory, catalog] = await Promise.all([api('/api/inventory'), api('/api/commands')]);
@@ -739,6 +900,7 @@ async function load(force = false) {
       updateIdentity();
     }
     render();
+    if (memberDialog.open && state.detailLogin) showMemberDialog(state.detailLogin);
   } catch (error) {
     state.session = { login: 'offline', role: 'UNAVAILABLE', allowed: false };
     updateIdentity();
@@ -842,14 +1004,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (doc) return openDoc(doc.dataset.doc);
     const detail = event.target.closest('[data-detail]');
     if (detail) {
-      state.detailLogin = detail.dataset.detail;
-      render();
+      showMemberDialog(detail.dataset.detail);
+      return;
+    }
+    const openCommand = event.target.closest('[data-open-command]');
+    if (openCommand) {
+      openCommandDialog(openCommand.dataset.openCommand);
+      return;
+    }
+    const rolePerms = event.target.closest('[data-role-perms]');
+    if (rolePerms) {
+      openRoleDialog(rolePerms.dataset.rolePerms);
       return;
     }
     const action = event.target.closest('[data-action]');
     if (action) {
       const name = action.dataset.action;
-      if (name === 'go-library') navigate('library');
+      if (name === 'go-back') navigate(docSection(state.openDoc?.id));
+      else if (name === 'go-library') navigate('library');
       else if (name === 'open-palette') openPalette();
       else if (name === 'toggle-all') {
         state.showAll = !state.showAll;
@@ -898,7 +1070,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  document.addEventListener('change', (event) => {
+    if (!event.target.matches('[data-scope-select]')) return;
+    const custom = event.target.closest('.field-row').querySelector('[data-scope-custom]');
+    if (custom) custom.hidden = event.target.value !== '__other';
+  });
+
+  bindDialog(memberDialog, closeMemberDialog);
+  bindDialog(commandDialog, closeCommandDialog);
+  bindDialog(roleDialog, closeRoleDialog);
+
   document.addEventListener('keydown', (event) => {
+    if (anyDialogOpen()) return;
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
       state.paletteOpen ? closePalette() : openPalette();

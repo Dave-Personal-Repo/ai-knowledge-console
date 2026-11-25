@@ -92,3 +92,13 @@ test('command catalog is exposed without internal argv functions', async () => {
   assert.ok(payload.commands.some((command) => command.id === 'publishVerify'));
   assert.ok(payload.commands.every((command) => !('argv' in command)));
 });
+
+test('CODE_OWNER command catalog hides higher role options', async () => {
+  setIdentity('tester-code', 'CODE_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await fetch(`${base}/api/commands`);
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  const roleField = payload.commands.find((command) => command.id === 'memberSetRole').fields.find((field) => field.name === 'role');
+  assert.deepEqual(roleField.options, ['COLLABORATOR', 'MEMBER']);
+});

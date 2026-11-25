@@ -47,10 +47,12 @@ test('inventory scope lists exclude roles above the session', () => {
   const inventory = {
     members: [{ login: 'a', role: 'SUPER_OWNER' }, { login: 'c', role: 'MEMBER' }],
     roleScopes: { SUPER_OWNER: ['a'], CODE_OWNER: ['b'], MEMBER: ['c'] },
+    permissionCounts: { SUPER_OWNER: 12, CODE_OWNER: 8, MEMBER: 2 },
   };
   const filtered = filterInventoryForRole(inventory, 'CODE_OWNER');
   assert.deepEqual(filtered.members.map((member) => member.login), ['c']);
   assert.deepEqual(Object.keys(filtered.roleScopes), ['CODE_OWNER', 'MEMBER']);
+  assert.deepEqual(Object.keys(filtered.permissionCounts), ['CODE_OWNER', 'MEMBER']);
 });
 
 test('runKb returns the command and captured output for a successful call', () => {

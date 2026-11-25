@@ -124,6 +124,21 @@
       </div>
     </div>
 
+    <dialog id="member-dialog" class="member-dialog" aria-labelledby="member-dialog-title">
+      <button class="icon-button dialog-close" type="button" data-action="close-member" aria-label="Close member details">×</button>
+      <div class="member-dialog-body" id="member-dialog-body"></div>
+    </dialog>
+
+    <dialog id="command-dialog" class="command-dialog" aria-labelledby="command-dialog-title">
+      <button class="icon-button dialog-close" type="button" data-action="close-command" aria-label="Close command">×</button>
+      <div class="command-dialog-body" id="command-dialog-body"></div>
+    </dialog>
+
+    <dialog id="role-dialog" class="role-dialog" aria-labelledby="role-dialog-title">
+      <button class="icon-button dialog-close" type="button" data-action="close-role" aria-label="Close role permissions">×</button>
+      <div class="role-dialog-body" id="role-dialog-body"></div>
+    </dialog>
+
     <div class="palette" id="palette" hidden>
       <div class="palette-backdrop" data-close-palette></div>
       <div class="palette-panel" role="dialog" aria-modal="true" aria-label="Command palette">
