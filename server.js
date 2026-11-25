@@ -4,10 +4,11 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn, spawnSync } = require('node:child_process');
 
 const PORT = Number(process.env.PORT || 4310);
 const HOST = process.env.HOST || '127.0.0.1';
+const KB_BIN = process.env.KB_BIN || 'kb';
 const PUBLIC_ROOT = path.join(__dirname, 'public');
 const KB_ROOT = path.resolve(process.env.KB_ROOT || path.join(os.homedir(), 'knowledge/ai-knowledge'));
 const SENSITIVE_ROOT = path.resolve(
@@ -60,6 +61,216 @@ function parseFrontMatter(text) {
   return { meta, body: text.slice(match[0].length) };
 }
 
+const ROLE_RANK = { SUPER_OWNER: 4, CODE_OWNER: 3, COLLABORATOR: 2, MEMBER: 1 };
+const OUTPUT_LIMIT = 64 * 1024;
+
+function visibleRoles(role) {
+  const rank = ROLE_RANK[role];
+  if (!rank) return [];
+  return Object.keys(ROLE_RANK).filter((candidate) => ROLE_RANK[candidate] <= rank);
+}
+
+function visibleMembers(members, role) {
+  const allowed = new Set(visibleRoles(role));
+  return (members || []).filter((member) => allowed.has(member.role));
+}
+
+function filterInventoryForRole(inventory, role) {
+  const allowed = new Set(visibleRoles(role));
+  const scoped = (entries) => Object.fromEntries(Object.entries(entries || {}).filter(([name]) => allowed.has(name)));
+  return {
+    ...inventory,
+    members: visibleMembers(inventory.members, role),
+    roleScopes: scoped(inventory.roleScopes),
+    permissionCounts: scoped(inventory.permissionCounts),
+  };
+}
+
+function redactOutput(text) {
+  const capped = String(text ?? '').slice(0, OUTPUT_LIMIT);
+  return capped
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, '[REDACTED]')
+    .replace(/(Bearer\s+)[A-Za-z0-9._-]{10,}/gi, '$1[REDACTED]')
+    .replace(/(token[=:\s]+)[A-Za-z0-9._-]{10,}/gi, '$1[REDACTED]');
+}
+
+function runKb(argv, runner = spawnSync) {
+  const started = Date.now();
+  const result = runner(KB_BIN, argv, {
+    cwd: KB_ROOT,
+    encoding: 'utf8',
+    timeout: 120_000,
+    maxBuffer: OUTPUT_LIMIT * 4,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const exitCode = result.status ?? 1;
+  return {
+    command: `kb ${argv.join(' ')}`,
+    ok: exitCode === 0 && !result.error,
+    exitCode,
+    stdout: redactOutput(result.stdout),
+    stderr: redactOutput(result.stderr),
+    durationMs: Date.now() - started,
+  };
+}
+
+const ROLES = Object.keys(ROLE_RANK);
+const CODE_OWNER_TARGET_ROLES = new Set(['COLLABORATOR', 'MEMBER']);
+const CLEANUP_SCOPES = ['archive', 'duplicates', 'full', 'integrity', 'metadata', 'outdated', 'temp'];
+const LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/;
+const SCOPE_RE = /^(?:(?:company|federated):[A-Za-z0-9._-]+|project:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)$/;
+
+function field(name, type, label, extra = {}) {
+  return { name, type, label, ...extra };
+}
+
+const loginField = () => field('login', 'text', 'GitHub login', { required: true });
+const scopeField = () => field('scope', 'text', 'Scope', { required: true, placeholder: 'company:my-team' });
+const applyField = () => field('apply', 'boolean', 'Apply changes');
+
+const COMMANDS = [
+  { id: 'status', label: 'Hub status', group: 'read', description: 'Sync state, documents and queue.', argv: () => ['status'] },
+  { id: 'doctor', label: 'Doctor', group: 'read', description: 'Agent integration health.', argv: () => ['doctor'] },
+  {
+    id: 'report', label: 'Usage report', group: 'read', description: 'Usage and knowledge report, with before/after comparison.',
+    fields: [field('days', 'number', 'Days', { default: '30' }), field('compare', 'date', 'Compare since')],
+    argv: (v) => (v.compare ? ['report', '--compare', v.compare] : ['report', '--days', String(v.days || 30)]),
+  },
+  { id: 'publishVerify', label: 'Publish verify', group: 'read', description: 'Check queued knowledge reached the main branch.', argv: () => ['publish', '--verify'] },
+  { id: 'publish', label: 'Publish proposals', group: 'change', mutating: true, description: 'Open pull requests for queued contributions.', argv: () => ['publish'] },
+  { id: 'sync', label: 'Sync to local', group: 'change', mutating: true, description: 'Fast-forward the local hub clone.', argv: () => ['sync'] },
+  {
+    id: 'triage', label: 'Triage', group: 'read', description: 'Review buckets for knowledge verification.',
+    fields: [field('mode', 'enum', 'View', { options: ['buckets', 'source', 'repo'], default: 'buckets' })],
+    argv: (v) => (v.mode === 'source' ? ['triage', '--by-source'] : v.mode === 'repo' ? ['triage', '--by-repo'] : ['triage']),
+  },
+  { id: 'validate', label: 'Validate knowledge', group: 'read', description: 'Check metadata, links, duplicates and secrets.', argv: () => ['validate'] },
+  { id: 'capabilities', label: 'Capabilities', group: 'read', description: 'Commands available to the current hub identity.', argv: () => ['capabilities'] },
+  { id: 'membersList', label: 'Member roster', group: 'read', description: 'Full roster from kb.', argv: () => ['members', 'list'] },
+  { id: 'rolesList', label: 'AI roles', group: 'read', description: 'Sub-agent roles and their switches.', argv: () => ['roles', 'list'] },
+  { id: 'featuresList', label: 'Feature switches', group: 'read', description: 'Features kb runs on this device.', argv: () => ['features', 'list'] },
+  { id: 'audit', label: 'Audit events', group: 'read', description: 'Recent authorization audit events.', argv: () => ['audit'] },
+  { id: 'logs', label: 'Usage events', group: 'read', description: 'Retrieval and capture observability events.', argv: () => ['logs'] },
+  { id: 'cleanupStatus', label: 'Cleanup status', group: 'read', description: 'Active and last maintenance run.', argv: () => ['cleanup', 'status'] },
+  { id: 'cleanupReport', label: 'Cleanup report', group: 'read', description: 'Last maintenance report.', argv: () => ['cleanup', 'report'] },
+  {
+    id: 'cleanupIntent', label: 'Check cleanup intent', group: 'read', description: 'Resolve a tidy-up request into a maintenance scope.',
+    fields: [field('intent', 'text', 'What should be tidied?', { required: true, min: 3, max: 200 })],
+    argv: (v) => ['cleanup', 'intent', v.intent],
+  },
+  {
+    id: 'cleanupRun', label: 'Run cleanup', group: 'change', mutating: true, description: 'Dry-run or apply knowledge maintenance.',
+    fields: [field('scope', 'enum', 'Scope', { options: CLEANUP_SCOPES, default: 'full' }), applyField()],
+    argv: (v) => ['cleanup', 'run', '--scope', v.scope || 'full', ...(v.apply ? ['--apply'] : [])],
+  },
+  {
+    id: 'promote', label: 'Verify knowledge', group: 'change', mutating: true, description: 'Preview or promote reviewed notes to verified.',
+    fields: [
+      field('target', 'enum', 'Match by', { options: ['note', 'folder'], default: 'note' }),
+      field('value', 'text', 'Source note or folder', { required: true, min: 1, max: 200 }),
+      field('reviewer', 'text', 'Reviewer', { max: 100 }),
+      field('evidence', 'text', 'What was checked', { max: 500 }),
+      field('judgement', 'boolean', 'Approve by judgement, not code review'),
+      applyField(),
+    ],
+    argv: (v) => [
+      'promote', v.target === 'folder' ? '--folder' : '--note', v.value,
+      ...(v.apply ? [
+        '--reviewer', v.reviewer,
+        '--evidence', v.evidence,
+        ...(v.judgement ? ['--judgement'] : []),
+        '--apply',
+      ] : []),
+    ],
+  },
+  {
+    id: 'memberSetRole', label: 'Change role', group: 'change', mutating: true, targetAction: 'set-role', description: 'Set a member role.',
+    fields: [loginField(), field('role', 'enum', 'New role', { options: ROLES, required: true })],
+    argv: (v) => ['members', 'set-role', v.login, v.role],
+  },
+  {
+    id: 'memberGrant', label: 'Grant scope', group: 'change', mutating: true, targetAction: 'grant', description: 'Grant a member an extra scope.',
+    fields: [loginField(), scopeField()],
+    argv: (v) => ['members', 'grant', v.login, v.scope],
+  },
+  {
+    id: 'memberUngrant', label: 'Ungrant scope', group: 'change', mutating: true, targetAction: 'ungrant', description: 'Remove an extra scope.',
+    fields: [loginField(), scopeField()],
+    argv: (v) => ['members', 'ungrant', v.login, v.scope],
+  },
+  {
+    id: 'memberSuspend', label: 'Suspend member', group: 'change', mutating: true, targetAction: 'suspend', description: 'Suspend an active member.',
+    fields: [loginField()],
+    argv: (v) => ['members', 'suspend', v.login],
+  },
+  {
+    id: 'memberReinstate', label: 'Reinstate member', group: 'change', mutating: true, targetAction: 'reinstate', description: 'Reinstate a suspended member.',
+    fields: [loginField()],
+    argv: (v) => ['members', 'reinstate', v.login],
+  },
+];
+
+function buildArgv(command, values) {
+  return command.argv(values || {});
+}
+
+function validateValues(command, values) {
+  if (!values || typeof values !== 'object' || Array.isArray(values)) return 'Values must be an object';
+  for (const spec of command.fields || []) {
+    const value = values[spec.name];
+    if (spec.required && (value === undefined || value === null || String(value).trim() === '')) return `${spec.label} is required`;
+    if (value === undefined || value === null || value === '') continue;
+    if (spec.type === 'enum' && !spec.options.includes(value)) return `Invalid ${spec.label}`;
+    if (spec.type === 'number' && (!/^\d+$/.test(String(value)) || Number(value) < 1 || Number(value) > 365)) return `Invalid ${spec.label}`;
+    if (spec.type === 'date' && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)))) return `Invalid ${spec.label} date`;
+    if (spec.type === 'boolean' && typeof value !== 'boolean') return `Invalid ${spec.label}`;
+    if (spec.type === 'text') {
+      const text = String(value);
+      if (/[\u0000-\u001f]/.test(text) || text.startsWith('-')) return `Invalid ${spec.label}`;
+      if (text.length > (spec.max || 200)) return `${spec.label} is too long`;
+      if (spec.min && text.trim().length < spec.min) return `${spec.label} is too short`;
+      if (spec.name === 'login' && !LOGIN_RE.test(text)) return 'Invalid login';
+      if (spec.name === 'scope' && !SCOPE_RE.test(text)) return 'Invalid scope';
+    }
+  }
+  if (command.mutating && values.confirm !== true) return 'Confirm is required';
+  if (command.id === 'promote' && values.apply === true) {
+    if (!String(values.reviewer || '').trim()) return 'Reviewer is required';
+    if (String(values.evidence || '').trim().length < 10) return 'Evidence must be at least 10 characters';
+  }
+  return null;
+}
+
+function assertTargetAllowed(session, values, member) {
+  if (!['SUPER_OWNER', 'CODE_OWNER'].includes(session?.role)) return 'Owner role required';
+  if (!values?.login || values.login === session.login) return 'Cannot change your own account';
+  if (!member) return 'Member not found';
+  if (values.action === 'reinstate' && member.status !== 'suspended') return 'Only suspended members can be reinstated here';
+  if (session.role === 'CODE_OWNER') {
+    if (!CODE_OWNER_TARGET_ROLES.has(member.role)) return 'Role not allowed';
+    if (values.role && !CODE_OWNER_TARGET_ROLES.has(values.role)) return 'Role not allowed';
+  }
+  return null;
+}
+
+function browserCommand(platform) {
+  if (platform === 'darwin') return { cmd: 'open', args: [] };
+  if (platform === 'win32') return { cmd: 'cmd', args: ['/c', 'start'] };
+  return { cmd: 'xdg-open', args: [] };
+}
+
+function shouldOpenBrowser(env, isDocker) {
+  return env.OPEN_BROWSER !== '0' && !env.CI && !isDocker;
+}
+
+function openBrowser(url) {
+  if (!shouldOpenBrowser(process.env, fs.existsSync('/.dockerenv'))) return;
+  const { cmd, args } = browserCommand(process.platform);
+  const child = spawn(cmd, [...args, url], { detached: true, stdio: 'ignore' });
+  child.on('error', () => {});
+  child.unref();
+}
+
 let sessionCache = null;
 let sessionCachedAt = 0;
 const SESSION_TTL = 60_000;
@@ -68,7 +279,7 @@ function getSession(force = false) {
   if (!force && sessionCache && Date.now() - sessionCachedAt < SESSION_TTL) return sessionCache;
   let next;
   try {
-    const output = execFileSync('kb', ['whoami'], {
+    const output = execFileSync(KB_BIN, ['whoami'], {
       cwd: KB_ROOT,
       encoding: 'utf8',
       timeout: 30_000,
@@ -173,18 +384,21 @@ function buildInventory() {
 
   const membersFile = readJson(path.join(KB_ROOT, 'members/members.json'));
   const rbacFile = readJson(path.join(KB_ROOT, 'config/rbac.json'));
-  const activeMembers = (membersFile?.members || [])
-    .filter((member) => member.status === 'active')
-    .map((member) => ({
-      login: member.github || member.id,
-      display: member.display || member.id || member.github,
-      role: member.role,
-      joined: member.joined || '',
-    }));
+  const members = (membersFile?.members || []).map((member) => ({
+    login: member.github || member.id,
+    display: member.display || member.id || member.github,
+    role: member.role,
+    status: member.status || 'unknown',
+    scopes: Array.isArray(member.scopes) ? member.scopes : [],
+    joined: member.joined || '',
+  }));
 
   const permissionCounts = {};
+  const roleScopes = {};
   for (const [role, permissions] of Object.entries(rbacFile?.roles || {})) {
-    permissionCounts[role] = Array.isArray(permissions) ? permissions.length : 0;
+    const list = Array.isArray(permissions) ? permissions : [];
+    permissionCounts[role] = list.length;
+    roleScopes[role] = list;
   }
 
   const counts = {
@@ -203,8 +417,9 @@ function buildInventory() {
     roots: roots().map(({ id, label }) => ({ id, label })),
     items,
     counts,
-    members: activeMembers,
+    members,
     permissionCounts,
+    roleScopes,
     sensitiveCategories: rbacFile?.sensitive_categories || [],
     sensitivePrefixes: rbacFile?.sensitive_path_prefixes || [],
   };
@@ -280,7 +495,43 @@ function serveStatic(request, response, pathname) {
   response.end(body);
 }
 
-const server = http.createServer((request, response) => {
+function readJsonBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    request.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 16 * 1024) {
+        reject(new Error('Request body too large'));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        reject(new Error('Invalid JSON body'));
+      }
+    });
+    request.on('error', reject);
+  });
+}
+
+function publicCommand(command) {
+  return {
+    id: command.id,
+    label: command.label,
+    group: command.group,
+    description: command.description,
+    mutating: Boolean(command.mutating),
+    targetAction: command.targetAction || null,
+    fields: command.fields || [],
+  };
+}
+
+const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
   const pathname = url.pathname;
 
@@ -292,7 +543,28 @@ const server = http.createServer((request, response) => {
     if (!session.allowed) return json(response, 403, { error: 'Owner role required', role: session.role });
 
     try {
-      if (pathname === '/api/inventory') return json(response, 200, buildInventory());
+      if (pathname === '/api/inventory') return json(response, 200, filterInventoryForRole(buildInventory(), session.role));
+      if (pathname === '/api/commands') return json(response, 200, { commands: COMMANDS.map(publicCommand) });
+      if (request.method === 'POST' && pathname.startsWith('/api/commands/')) {
+        const id = decodeURIComponent(pathname.slice('/api/commands/'.length));
+        const command = COMMANDS.find((item) => item.id === id);
+        if (!command) return json(response, 404, { error: 'Unknown command' });
+        if (request.headers['x-kconsole'] !== '1') return json(response, 400, { error: 'Console header required' });
+        if (!String(request.headers['content-type'] || '').startsWith('application/json')) {
+          return json(response, 400, { error: 'JSON body required' });
+        }
+        const body = await readJsonBody(request);
+        const invalid = validateValues(command, body.values);
+        if (invalid) return json(response, 400, { error: invalid });
+        if (command.targetAction) {
+          const members = readJson(path.join(KB_ROOT, 'members/members.json'))?.members || [];
+          const member = members.find((item) => (item.github || item.id) === body.values.login);
+          const denied = assertTargetAllowed(session, { ...body.values, action: command.targetAction }, member);
+          if (denied) return json(response, 403, { error: denied });
+        }
+        const result = runKb(buildArgv(command, body.values));
+        return json(response, 200, { id, ...result });
+      }
       if (pathname === '/api/document') {
         const document = resolveDocument(url.searchParams.get('source'), url.searchParams.get('path'));
         return document ? json(response, 200, document) : json(response, 404, { error: 'Document not found' });
@@ -306,8 +578,27 @@ const server = http.createServer((request, response) => {
   return serveStatic(request, response, pathname);
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`AI Knowledge Console running at http://${HOST}:${PORT}`);
-  console.log(`Hub:   ${KB_ROOT}`);
-  console.log(`Sensitive: ${fs.existsSync(SENSITIVE_ROOT) ? SENSITIVE_ROOT : 'not present'}`);
-});
+module.exports = {
+  ROLE_RANK,
+  visibleRoles,
+  visibleMembers,
+  filterInventoryForRole,
+  runKb,
+  redactOutput,
+  COMMANDS,
+  buildArgv,
+  validateValues,
+  assertTargetAllowed,
+  browserCommand,
+  shouldOpenBrowser,
+  server,
+};
+
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    console.log(`AI Knowledge Console running at http://${HOST}:${PORT}`);
+    console.log(`Hub:   ${KB_ROOT}`);
+    console.log(`Sensitive: ${fs.existsSync(SENSITIVE_ROOT) ? SENSITIVE_ROOT : 'not present'}`);
+    openBrowser(`http://${HOST}:${PORT}`);
+  });
+}

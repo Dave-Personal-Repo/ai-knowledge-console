@@ -29,6 +29,9 @@ const state = {
   inventory: null,
   filters: { query: '', kind: 'all', status: 'all', source: 'all', category: 'all', sort: 'title' },
   showAll: false,
+  commands: [],
+  results: {},
+  detailLogin: null,
   paletteOpen: false,
   paletteIndex: 0,
   paletteMatches: [],
@@ -67,6 +70,22 @@ function hydrateIcons(root = document) {
 
 async function api(path) {
   const response = await fetch(path, { headers: { Accept: 'application/json' } });
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = { error: `Invalid response (${response.status})` };
+  }
+  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status})`);
+  return payload;
+}
+
+async function post(path, body) {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-KConsole': '1', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
   let payload;
   try {
     payload = await response.json();
@@ -152,7 +171,8 @@ function bars(entries, total) {
 }
 
 function renderDashboard() {
-  const { counts, items, members } = state.inventory;
+  const { counts, items } = state.inventory;
+  const members = state.inventory.members.filter((member) => member.status === 'active');
   const recent = [...items]
     .filter((item) => item.status === 'verified' || item.status === 'approved')
     .sort((a, b) => String(b.lastVerifiedAt || b.createdAt).localeCompare(String(a.lastVerifiedAt || a.createdAt)))
@@ -443,37 +463,100 @@ async function renderDoc(id) {
   }
 }
 
+const ROLE_RANK = { SUPER_OWNER: 4, CODE_OWNER: 3, COLLABORATOR: 2, MEMBER: 1 };
+
+function commandField(spec, options = spec.options) {
+  const label = esc(spec.label);
+  if (spec.type === 'boolean') {
+    return `<label class="field-row check"><input type="checkbox" name="${esc(spec.name)}" ${spec.default ? 'checked' : ''}/><span>${label}</span></label>`;
+  }
+  if (spec.type === 'enum') {
+    return `<label class="field-row"><span>${label}</span><select name="${esc(spec.name)}">${(options || []).map((option) => `<option value="${esc(option)}" ${option === spec.default ? 'selected' : ''}>${esc(option.replace('_', ' '))}</option>`).join('')}</select></label>`;
+  }
+  const type = spec.type === 'date' ? 'date' : spec.type === 'number' ? 'number' : 'text';
+  const placeholder = spec.placeholder ? ` placeholder="${esc(spec.placeholder)}"` : '';
+  return `<label class="field-row"><span>${label}</span><input type="${type}" name="${esc(spec.name)}" value="${esc(spec.default || '')}"${placeholder}/></label>`;
+}
+
+function commandForm(command, options = {}) {
+  const fields = (command.fields || []).map((spec) => {
+    if (spec.name === 'role' && state.session.role === 'CODE_OWNER') {
+      return { ...spec, options: ['COLLABORATOR', 'MEMBER'], default: 'COLLABORATOR' };
+    }
+    return spec;
+  });
+  return `<form class="command-card" data-command="${esc(command.id)}">
+    <div class="command-card-head"><h4>${esc(command.label)}</h4><span class="badge ${command.mutating ? 'proposed' : 'policy'}">${command.mutating ? 'changes hub' : 'read only'}</span></div>
+    <p>${esc(command.description)}</p>
+    <div class="field-grid">
+      ${options.login ? `<input type="hidden" name="login" value="${esc(options.login)}"/>` : ''}
+      ${fields.filter((spec) => spec.name !== 'login' || !options.login).map((spec) => commandField(spec)).join('')}
+    </div>
+    ${command.mutating ? `<label class="confirm-row"><input type="checkbox" name="confirm"/><span>I understand this command changes the hub.</span></label>` : ''}
+    <div class="command-actions"><button class="primary-button" type="submit">${icon('command')} Run ${esc(command.label)}</button></div>
+    <div id="result-${esc(command.id)}">${resultPanel(command.id)}</div>
+  </form>`;
+}
+
+function resultPanel(id) {
+  const result = state.results[id];
+  if (!result) return '';
+  return `<div class="result-panel${result.ok ? '' : ' failed'}">
+    <div class="result-head"><code>${esc(result.command)}</code><span>exit ${result.exitCode} · ${result.durationMs} ms</span></div>
+    ${result.stdout ? `<pre>${esc(result.stdout)}</pre>` : ''}
+    ${result.stderr ? `<pre class="result-error">${esc(result.stderr)}</pre>` : ''}
+  </div>`;
+}
+
 function renderAccess() {
-  const { members, permissionCounts } = state.inventory;
-  const roles = ['SUPER_OWNER', 'CODE_OWNER', 'COLLABORATOR', 'MEMBER'];
+  const { members, permissionCounts, roleScopes } = state.inventory;
+  const roles = Object.keys(roleScopes || permissionCounts);
   const descriptions = {
     SUPER_OWNER: 'Full control, including ownership, security settings and sensitive knowledge.',
     CODE_OWNER: 'Reviews protected paths and manages members and collaborators.',
     COLLABORATOR: 'Contributes by pull request and reads authorised knowledge.',
     MEMBER: 'Read-only access to general knowledge through the CLI.',
   };
+  const detail = members.find((member) => member.login === state.detailLogin);
+  const canAct = detail && (state.session.role === 'SUPER_OWNER' || (ROLE_RANK[detail.role] || 0) <= ROLE_RANK.COLLABORATOR);
+  const actions = canAct
+    ? state.commands.filter((command) => {
+      if (!command.targetAction) return false;
+      if (detail.status === 'active') return command.id !== 'memberReinstate';
+      return detail.status === 'suspended' && command.id === 'memberReinstate';
+    })
+    : [];
+  const scopes = detail ? roleScopes[detail.role] || [] : [];
+
   return `
     <header class="page-head">
-      <div><span class="eyebrow">Governance</span><h1>Access &amp; roles</h1><p>Roles are read from the canonical roster on GitHub — this console cannot grant or change them.</p></div>
-      <span class="role-chip authorized"><i></i><span>Verified roster</span></span>
+      <div><span class="eyebrow">Governance</span><h1>Access &amp; roles</h1><p>Roles and scopes are read from the canonical roster. Changes run as the verified hub identity and require confirmation.</p></div>
+      <span class="role-chip authorized"><i></i><span>${esc(state.session.role.replace('_', ' '))} session</span></span>
     </header>
 
     <section class="access-grid">
       ${roles.map((role, index) => `<div class="role-card" style="animation-delay:${index * 0.06}s">
         <span class="role-number">${permissionCounts[role] || 0}</span>
         <div class="role-icon">${icon(role.includes('SUPER') ? 'lock' : role.includes('CODE') ? 'shield' : 'users')}</div>
-        <h4>${role.replace('_', ' ')}</h4>
-        <p>${descriptions[role]}</p>
+        <h4>${esc(role.replace('_', ' '))}</h4>
+        <p>${esc(descriptions[role] || 'Custom role.')}</p>
       </div>`).join('')}
     </section>
 
-    <div class="section-title"><h3>Active people</h3><span>${members.length} accounts</span></div>
+    <div class="section-title"><h3>People</h3><span>${members.filter((member) => member.status === 'active').length} active · ${members.length} total visible</span></div>
     <section class="panel" style="padding:6px 18px;animation-delay:.2s">
       <table class="data-table">
-        <thead><tr><th>Account</th><th>Display name</th><th>Role</th><th>Joined</th></tr></thead>
-        <tbody>${members.map((member) => `<tr><td>${esc(member.login)}</td><td>${esc(member.display)}</td><td>${esc(member.role.replace('_', ' '))}</td><td>${esc(member.joined || '—')}</td></tr>`).join('')}</tbody>
+        <thead><tr><th>Account</th><th>Display name</th><th>Role</th><th>Status</th><th>Scopes</th><th>Joined</th><th></th></tr></thead>
+        <tbody>${members.map((member) => `<tr><td>${esc(member.login)}</td><td>${esc(member.display)}</td><td>${esc(member.role.replace('_', ' '))}</td><td><span class="badge ${member.status === 'active' ? 'verified' : ''}">${esc(member.status)}</span></td><td>${scopesCount(member, roleScopes)}</td><td>${esc(member.joined || '—')}</td><td><button class="ghost-button" type="button" data-detail="${esc(member.login)}">Details</button></td></tr>`).join('')}</tbody>
       </table>
     </section>
+
+    ${detail ? `<div class="section-title"><h3>${esc(detail.login)}</h3><span>${esc(detail.role.replace('_', ' '))} · ${esc(detail.status)}</span></div>
+    <section class="panel detail-panel">
+      <div class="scope-block"><h4>Role scopes (${scopes.length})</h4><div class="scope-list">${scopes.map((scope) => `<span class="tag">${esc(scope)}</span>`).join('') || '<span class="results-meta">No scopes recorded.</span>'}</div></div>
+      <div class="scope-block"><h4>Extra member scopes (${detail.scopes.length})</h4><div class="scope-list">${detail.scopes.map((scope) => `<span class="tag ${scope.startsWith('company:') ? 'verified' : ''}">${esc(scope)}</span>`).join('') || '<span class="results-meta">No extra scopes.</span>'}</div></div>
+      ${actions.length ? `<div class="command-grid">${actions.map((command) => commandForm(command, { login: detail.login })).join('')}</div>` : '<p class="results-meta">No changes available for this member in the current session.</p>'}
+    </section>` : ''}
 
     <div class="section-title"><h3>Sensitive surface</h3><span>Why this console is owner-only</span></div>
     <section class="panel-grid">
@@ -483,9 +566,73 @@ function renderAccess() {
     </section>`;
 }
 
+function scopesCount(member, roleScopes) {
+  return (roleScopes[member.role] || []).length + member.scopes.length;
+}
+
+function renderOperations() {
+  const groups = [
+    { key: 'read', title: 'Informative', text: 'Read-only views into the hub and this device.' },
+    { key: 'change', title: 'Changes', text: 'Commands with an explicit confirmation step.' },
+  ];
+  return `
+    <header class="page-head">
+      <div><span class="eyebrow">Operator console</span><h1>Hub operations</h1><p>Run the same <code>kb</code> commands you use in a terminal, with fixed inputs and visible output.</p></div>
+      <button class="ghost-button" type="button" data-action="refresh">${icon('refresh')} Refresh hub data</button>
+    </header>
+    ${groups.map((group) => {
+      const commands = state.commands.filter((command) => command.group === group.key);
+      return `<div class="section-title"><h3>${group.title}</h3><span>${group.text}</span></div>
+        <section class="command-grid">${commands.map((command) => commandForm(command)).join('') || stateBox('command', 'No commands available', 'The command catalog could not be loaded.')}</section>`;
+    }).join('')}`;
+}
+
+function formValues(form, command) {
+  const data = new FormData(form);
+  const values = {};
+  for (const spec of command.fields || []) {
+    if (spec.type === 'boolean') values[spec.name] = data.has(spec.name);
+    else if (data.has(spec.name)) values[spec.name] = String(data.get(spec.name));
+  }
+  values.confirm = data.has('confirm');
+  return values;
+}
+
+async function runCommand(form) {
+  const command = state.commands.find((item) => item.id === form.dataset.command);
+  if (!command) return;
+  const values = formValues(form, command);
+  if (command.mutating && !values.confirm) {
+    toast(`Tick the confirmation box before running ${command.label}`, 'error');
+    return;
+  }
+
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  try {
+    const result = await post(`/api/commands/${encodeURIComponent(command.id)}`, { values });
+    state.results[command.id] = result;
+    toast(result.ok ? `${command.label} completed` : `${command.label} exited ${result.exitCode}`, result.ok ? 'info' : 'error');
+  } catch (error) {
+    state.results[command.id] = {
+      ok: false,
+      command: `kb ${command.id}`,
+      exitCode: '—',
+      stdout: '',
+      stderr: error.message,
+      durationMs: 0,
+    };
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+    const panel = document.getElementById(`result-${command.id}`);
+    if (panel) panel.innerHTML = resultPanel(command.id);
+  }
+}
+
 function renderAbout() {
   return `
-    <header class="page-head"><div><span class="eyebrow">System</span><h1>About this console</h1><p>A thin, self-hosted view over the AI knowledge hub. It reads; it never writes.</p></div></header>
+    <header class="page-head"><div><span class="eyebrow">System</span><h1>About this console</h1><p>A thin, self-hosted view and operator console for the AI knowledge hub.</p></div></header>
     <section class="about-grid">
       <div class="about-card">
         <h4>How it works</h4>
@@ -497,6 +644,8 @@ function renderAbout() {
         <ul>
           <li>Only <strong>SUPER_OWNER</strong> and <strong>CODE_OWNER</strong> sessions pass the API gate.</li>
           <li>Roles come from <code>kb whoami</code>, which reads the canonical roster on GitHub.</li>
+          <li>CODE_OWNER sees CODE_OWNER peers but cannot change them; SUPER_OWNER sees all members.</li>
+          <li>Every change runs as the current <code>kb</code> identity and needs explicit confirmation.</li>
           <li>Sensitive documents are never shipped with this app.</li>
         </ul>
       </div>
@@ -540,6 +689,7 @@ function render() {
     if (route.name === 'library') view.innerHTML = renderLibrary();
     else if (route.name === 'policies') view.innerHTML = renderLibrary('policy');
     else if (route.name === 'access') view.innerHTML = renderAccess();
+    else if (route.name === 'operations') view.innerHTML = renderOperations();
     else if (route.name === 'about') view.innerHTML = renderAbout();
     else view.innerHTML = renderDashboard();
   } catch (error) {
@@ -581,8 +731,9 @@ async function load(force = false) {
     state.session = await api(`/api/session${force ? '?fresh=1' : ''}`);
     updateIdentity();
     if (state.session.allowed) {
-      const inventory = await api('/api/inventory');
+      const [inventory, catalog] = await Promise.all([api('/api/inventory'), api('/api/commands')]);
       state.inventory = inventory;
+      state.commands = catalog.commands || [];
       document.getElementById('nav-knowledge-count').textContent = inventory.counts.knowledge;
       document.getElementById('nav-policy-count').textContent = inventory.counts.policy;
       updateIdentity();
@@ -618,6 +769,7 @@ function updatePalette() {
     { id: '__library', title: 'Knowledge library', summary: 'Browse every document' },
     { id: '__policies', title: 'Rules & policies', summary: 'Governance and process' },
     { id: '__access', title: 'Access & roles', summary: 'Canonical roster' },
+    { id: '__operations', title: 'Hub operations', summary: 'Informative and change commands' },
   ];
   const docs = state.inventory.items
     .filter((item) => !query || `${item.title} ${item.summary} ${item.category} ${(item.tags || []).join(' ')}`.toLowerCase().includes(query))
@@ -679,7 +831,7 @@ document.addEventListener('DOMContentLoaded', () => {
     render();
   });
 
-  view.addEventListener('click', (event) => {
+  view.addEventListener('click', async (event) => {
     const toc = event.target.closest('[data-toc]');
     if (toc) {
       event.preventDefault();
@@ -688,6 +840,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const doc = event.target.closest('[data-doc]');
     if (doc) return openDoc(doc.dataset.doc);
+    const detail = event.target.closest('[data-detail]');
+    if (detail) {
+      state.detailLogin = detail.dataset.detail;
+      render();
+      return;
+    }
     const action = event.target.closest('[data-action]');
     if (action) {
       const name = action.dataset.action;
@@ -696,6 +854,9 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (name === 'toggle-all') {
         state.showAll = !state.showAll;
         render();
+      } else if (name === 'refresh') {
+        await load(true);
+        toast('Hub data refreshed');
       } else if (name === 'copy-link') {
         navigator.clipboard?.writeText(location.href).then(() => toast('Link copied')).catch(() => toast('Clipboard unavailable', 'error'));
       }
@@ -720,6 +881,13 @@ document.addEventListener('DOMContentLoaded', () => {
       next.focus();
       next.setSelectionRange(position, position);
     }
+  });
+
+  view.addEventListener('submit', (event) => {
+    const form = event.target.closest('form[data-command]');
+    if (!form) return;
+    event.preventDefault();
+    runCommand(form);
   });
 
   view.addEventListener('change', (event) => {
