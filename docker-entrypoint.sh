@@ -11,7 +11,10 @@ auth_source="${GH_AUTH_SOURCE:-/run/gh/hosts.yml}"
 auth_dir="${GH_CONFIG_DIR:-/home/console/.config/gh}"
 auth_dest="$auth_dir/hosts.yml"
 
-mkdir -p "$auth_dir" /home/console/.local/state
+state_dir="${KB_STATE:-/home/console/.local/state/kb}"
+seed_root="${KB_STATE_SEED:-/run/kb-state}"
+
+mkdir -p "$auth_dir" "$state_dir" "$state_dir/canonical"
 chown console:console "$auth_dir" /home/console/.local/state
 
 if [ ! -s "$auth_dest" ] && [ -s "$auth_source" ]; then
@@ -19,5 +22,18 @@ if [ ! -s "$auth_dest" ] && [ -s "$auth_source" ]; then
   chmod 600 "$auth_dest"
   chown console:console "$auth_dest"
 fi
+
+# kb reads roles and licence status from a canonical-file cache in STATE. Seed it from the
+# host's proven login and cache, then let kb own a writable copy: a stale host gh token still
+# works, and a working GH_TOKEN can refresh it without writing through the read-only mount.
+if [ -d "$seed_root/canonical" ]; then
+  cp -R "$seed_root/canonical/." "$state_dir/canonical/"
+fi
+for f in gh-login.json license.json identity.json membership.json gate.jsonl; do
+  if [ -s "$seed_root/$f" ]; then
+    cp "$seed_root/$f" "$state_dir/$f"
+  fi
+done
+chown -R console:console /home/console/.local/state
 
 exec gosu console "$@"

@@ -23,9 +23,9 @@ make up
 # http://127.0.0.1:4310
 ```
 
-Compose mounts the two hub clones read-only at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, your GitHub login from `~/.config/gh` at `/run/gh`, and the host's verified-login cache from `~/.local/state/kb` at `/run/kb-state`. The entrypoint copies the login into the container home (root only, then drops to UID 1001) because `hosts.yml` is mode 600 on the host. Reusing the host cache matters: `kb` accepts a login proven by GitHub within the last 24 hours, and a fresh `gh api user` call is only needed after that. Alternatively, put a working `GH_TOKEN=...` in `.secret/credentials.env`. `KB_IDENTITY` is a claimed login only; it grants nothing without verification.
+Compose mounts the two hub clones read-only at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, your GitHub login from `~/.config/gh` at `/run/gh`, and the host's verified-login cache from `~/.local/state/kb` at `/run/kb-state`. The entrypoint (root only, then drops to UID 1001) copies the login into the container home because `hosts.yml` is mode 600 on the host, and seeds a writable container `kb` state from the host's proven login and canonical role cache. That seed matters: `kb` accepts a login proven by GitHub for up to 24 hours and reads roles from the canonical cache, so a stale host token does not lock the console out. With a working `GH_TOKEN` in `.secret/credentials.env`, `kb` refreshes the cache itself. `KB_IDENTITY` is a claimed login only; it grants nothing without verification. After a stale token passes the 24-hour window, `docker compose restart` re-imports a fresh host login.
 
-`make health` checks `/api/session`, `make logs` follows the container, `make down` stops it. Copy `.env.example` to `.env` to change the host port or bind address. The container never writes to the knowledge or state mounts.
+`make health` checks `/api/session`, `make logs` follows the container, `make down` stops it. Copy `.env.example` to `.env` to change the host port or bind address. The container never writes to the knowledge or host-state mounts; only its own `kb` cache is writable.
 
 ## Access model
 

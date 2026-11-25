@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 10s
 
-    # Optional: put GH_TOKEN=github_pat_... here (gitignored) instead of mounting gh login.
+    # Optional: put GH_TOKEN=<token> here (gitignored) instead of mounting the gh login.
     env_file:
       - path: .secret/credentials.env
         required: false
@@ -23,8 +23,8 @@ services:
     environment:
       # Claimed login; the container still requires a GitHub-verified login before any role is granted.
       KB_IDENTITY: ${KB_IDENTITY:-dave-bfi}
-      # Reuse the host's verified-login cache so a stale gh token does not lock the console out.
-      KB_STATE: /run/kb-state
+      # Writable container state, seeded from the host by the entrypoint.
+      KB_STATE: /home/console/.local/state/kb
       TZ: ${TZ:-UTC}
 
     volumes:
@@ -33,5 +33,5 @@ services:
       - ${HOME}/knowledge/ai-knowledge-sensitive:/knowledge/ai-knowledge-sensitive:ro
       # Host gh login (mode 600) is copied into the container by the entrypoint.
       - ${HOME}/.config/gh:/run/gh:ro
-      # kb reads the verified login the host already proved (and refreshes it on the host).
+      # Seeded into the container's writable kb state so a stale gh token cannot lock the console out.
       - ${HOME}/.local/state/kb:/run/kb-state:ro
