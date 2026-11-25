@@ -35,3 +35,5 @@ services:
       - ${HOME}/.config/gh:/run/gh:ro
       # Seeded into the container's writable kb state so a stale gh token cannot lock the console out.
       - ${HOME}/.local/state/kb:/run/kb-state:ro
+      # Host agent logins/provider config, refreshed by `make auth`/`make restart`.
+      - ./.agent-auth:/run/agent-auth:ro

@@ -15,7 +15,9 @@ RUN apt-get update \
 # UID/GID 1001 matches the bot image so state volumes stay consistent across projects.
 RUN groupadd --system --gid 1001 console \
   && useradd --system --uid 1001 --gid console --create-home --home-dir /home/console console \
-  && mkdir -p /app /knowledge /home/console/.config/gh /home/console/.local/state \
+  && mkdir -p /app /knowledge /home/console/.config/gh /home/console/.config/opencode \
+     /home/console/.local/share/opencode /home/console/.local/state \
+     /home/console/.codex /home/console/.claude \
   && chown -R console:console /app /home/console
 
 WORKDIR /app

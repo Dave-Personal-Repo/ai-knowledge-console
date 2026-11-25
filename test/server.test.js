@@ -16,6 +16,7 @@ const {
   assertTargetAllowed,
   browserCommand,
   shouldOpenBrowser,
+  handleServerError,
 } = require('../server.js');
 
 function command(id) {
@@ -145,4 +146,17 @@ test('browser opener is skipped in CI, Docker and on request', () => {
   assert.equal(shouldOpenBrowser({ OPEN_BROWSER: '0' }, false), false);
   assert.equal(shouldOpenBrowser({ CI: 'true' }, false), false);
   assert.equal(shouldOpenBrowser({}, true), false);
+});
+
+test('an already-used port opens the running UI instead of failing', () => {
+  const opened = [];
+  const url = 'http://127.0.0.1:4310';
+  assert.equal(handleServerError({ code: 'EADDRINUSE', message: 'port in use' }, url, (target) => opened.push(target)), true);
+  assert.deepEqual(opened, [url]);
+});
+
+test('other server errors do not open a browser', () => {
+  const opened = [];
+  assert.equal(handleServerError({ code: 'EACCES' }, 'http://127.0.0.1:4310', (target) => opened.push(target)), false);
+  assert.deepEqual(opened, []);
 });

@@ -23,6 +23,30 @@ if [ ! -s "$auth_dest" ] && [ -s "$auth_source" ]; then
   chown console:console "$auth_dest"
 fi
 
+# OpenCode login/config and the Codex/Claude home state are refreshed on the host by
+# scripts/agent-auth.sh. Copy them into the container user's home so any agent tooling has the
+# same providers and logins as the host; the mount stays read-only and the copy is disposable.
+console_home=/home/console
+agent_root="${AGENT_AUTH_ROOT:-/run/agent-auth}"
+
+if [ -s "$agent_root/opencode-auth.json" ]; then
+  mkdir -p "$console_home/.local/share/opencode"
+  cp "$agent_root/opencode-auth.json" "$console_home/.local/share/opencode/auth.json"
+  chmod 600 "$console_home/.local/share/opencode/auth.json"
+fi
+if [ -s "$agent_root/opencode.jsonc" ]; then
+  mkdir -p "$console_home/.config/opencode"
+  cp "$agent_root/opencode.jsonc" "$console_home/.config/opencode/opencode.jsonc"
+fi
+for name in codex claude; do
+  if [ -d "$agent_root/$name" ]; then
+    mkdir -p "$console_home/.$name"
+    cp -R "$agent_root/$name/." "$console_home/.$name/"
+  fi
+done
+chown -R console:console "$console_home/.codex" "$console_home/.claude" \
+  "$console_home/.config/opencode" "$console_home/.local/share/opencode"
+
 # kb reads roles and licence status from a canonical-file cache in STATE. Seed it from the
 # host's proven login and cache, then let kb own a writable copy: a stale host gh token still
 # works, and a working GH_TOKEN can refresh it without writing through the read-only mount.

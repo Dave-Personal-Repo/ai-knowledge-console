@@ -11,7 +11,7 @@ npm start
 # opens http://127.0.0.1:4310 in your browser
 ```
 
-The browser opens automatically on macOS, Linux and Windows. Set `OPEN_BROWSER=0` to keep the server headless; opening is also skipped in CI and Docker.
+The browser opens automatically on macOS, Linux and Windows. Running `npm start` again while the console is already running opens the existing UI instead of failing. Set `OPEN_BROWSER=0` to keep the server headless; opening is also skipped in CI and inside the container.
 
 Environment overrides: `PORT`, `HOST`, `KB_ROOT`, `KB_SENSITIVE_ROOT`, `OPEN_BROWSER`. Changing commands need a writable local `kb` clone; the read-only Docker mounts described below are suitable for browsing and read-only commands only.
 
@@ -22,14 +22,21 @@ Follows the same shape as `auto-review-pr-bot`: non-root runtime, `env_file`, re
 ```bash
 mkdir -p .secret && chmod 700 .secret
 printf 'GH_TOKEN=%s\n' "$(gh auth token)" > .secret/credentials.env && chmod 600 .secret/credentials.env
-make build
+make
+# prints every target
 make up
-# http://127.0.0.1:4310
+# copies host agent auth, rebuilds, waits until authorised, opens http://127.0.0.1:4310
+make restart
+# same thing after a clean container down
 ```
+
+`make up` and `make restart` both run `scripts/agent-auth.sh`, then `scripts/docker-up.sh`. The latter rebuilds the image, waits for an authorised `/api/session`, prunes superseded images, and opens the dashboard on the host — including when the container was already running. Use `./scripts/docker-up.sh --no-build` to reuse the current image, `--no-open` or `OPEN_BROWSER=0` to stay headless, and `make auth` to refresh only the copied state.
+
+`make auth` copies four things from the host into gitignored `.agent-auth/`: `~/.local/share/opencode/auth.json`, `~/.config/opencode/opencode.jsonc` (including the `openai` and `anthropic` provider entries), `~/.codex`, and `~/.claude`. The container entrypoint installs them into its own disposable home. Missing sources become empty placeholders so the console still starts. The copies are made readable by the container user (UID 1001); do not commit `.agent-auth/`. Override the source root with `AGENT_AUTH_SOURCE_HOME` or the target with `AGENT_AUTH_DIR`.
 
 `kb` re-verifies with GitHub every 5 minutes and reads roles from the canonical repository. A container cannot use your macOS keyring, so `GH_TOKEN` in `.secret/credentials.env` (gitignored) is required for durable access: a copied `hosts.yml` alone works only until the cache expires. The entrypoint (root only, then drops to UID 1001) copies the login into the container home because `hosts.yml` is mode 600, and seeds a writable container `kb` state from the host's proven login and canonical role cache so startup works before the first GitHub refresh. `KB_IDENTITY` is a claimed login only; it grants nothing without verification.
 
-Compose mounts the two hub clones read-only at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, and the host's `kb` state read-only at `/run/kb-state`. The healthcheck fails when `/api/session` is not authorized. `make health` checks the same endpoint, `make logs` follows the container, `make down` stops it. Copy `.env.example` to `.env` to change the host port or bind address. The container never writes to the knowledge or host-state mounts; only its own `kb` state is writable, so changing commands such as `sync`, `publish`, `cleanup run` and member updates must be run through a local `npm start` against a writable clone.
+Compose mounts the two hub clones read-only at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, the host's `kb` state read-only at `/run/kb-state`, and `.agent-auth` read-only at `/run/agent-auth`. The healthcheck fails when `/api/session` is not authorized. `make status` shows container state and health, `make health` prints the gate JSON, `make logs` follows the container, `make logs-tail` prints the last 200 lines, `make ui` opens the dashboard, `make shell` opens a container shell, `make down` stops it, and `make clean` asks before deleting the state volume. Copy `.env.example` to `.env` to change the host port or bind address. The container never writes to the knowledge, host-state or agent-auth mounts; only its own `kb` state is writable, so changing commands such as `sync`, `publish`, `cleanup run` and member updates must be run through a local `npm start` against a writable clone.
 
 ## Access model
 
@@ -62,7 +69,8 @@ server.js            zero-dependency HTTP server, auth gate, inventory API and c
 public/              application shell, design system, router and renderer
 test/                node:test unit and API coverage
 Dockerfile           node:22 runtime with git, gh, python3, curl and gosu
-docker-entrypoint.sh host gh login overlay, then drops to UID 1001
-docker-compose.yml   read-only hub mounts, loopback port, state volume
-Makefile             build/up/down/logs/health/check
+docker-entrypoint.sh host gh/agent login overlay, then drops to UID 1001
+docker-compose.yml   read-only hub and agent-auth mounts, loopback port, state volume
+scripts/             auth copy, Docker up, image prune
+Makefile             bot-style help/build/up/restart/logs/status/health/ui/check
 ```

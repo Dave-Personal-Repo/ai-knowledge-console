@@ -271,6 +271,16 @@ function openBrowser(url) {
   child.unref();
 }
 
+function handleServerError(error, url, open = openBrowser) {
+  if (error && error.code === 'EADDRINUSE') {
+    console.log(`AI Knowledge Console already running at ${url}; opening it.`);
+    open(url);
+    return true;
+  }
+  console.error(`AI Knowledge Console could not start: ${error?.message || error}`);
+  return false;
+}
+
 let sessionCache = null;
 let sessionCachedAt = 0;
 const SESSION_TTL = 60_000;
@@ -591,14 +601,19 @@ module.exports = {
   assertTargetAllowed,
   browserCommand,
   shouldOpenBrowser,
+  handleServerError,
   server,
 };
 
 if (require.main === module) {
+  const url = `http://${HOST}:${PORT}`;
+  server.on('error', (error) => {
+    if (!handleServerError(error, url)) process.exitCode = 1;
+  });
   server.listen(PORT, HOST, () => {
-    console.log(`AI Knowledge Console running at http://${HOST}:${PORT}`);
+    console.log(`AI Knowledge Console running at ${url}`);
     console.log(`Hub:   ${KB_ROOT}`);
     console.log(`Sensitive: ${fs.existsSync(SENSITIVE_ROOT) ? SENSITIVE_ROOT : 'not present'}`);
-    openBrowser(`http://${HOST}:${PORT}`);
+    openBrowser(url);
   });
 }
