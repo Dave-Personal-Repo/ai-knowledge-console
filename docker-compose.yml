@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 10s
 
-    # Optional: put GH_TOKEN=<token> here (gitignored) instead of mounting the gh login.
+    # Required for durable access: GH_TOKEN=<token> (gitignored); the container cannot use the host keyring.
     env_file:
       - path: .secret/credentials.env
         required: false

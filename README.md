@@ -15,17 +15,19 @@ Environment overrides: `PORT`, `HOST`, `KB_ROOT`, `KB_SENSITIVE_ROOT`.
 
 ## Docker
 
-Follows the same shape as `auto-review-pr-bot`: non-root runtime, optional `env_file`, read-only mounts, healthcheck.
+Follows the same shape as `auto-review-pr-bot`: non-root runtime, `env_file`, read-only mounts, healthcheck.
 
 ```bash
+mkdir -p .secret && chmod 700 .secret
+printf 'GH_TOKEN=%s\n' "$(gh auth token)" > .secret/credentials.env && chmod 600 .secret/credentials.env
 make build
 make up
 # http://127.0.0.1:4310
 ```
 
-Compose mounts the two hub clones read-only at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, your GitHub login from `~/.config/gh` at `/run/gh`, and the host's verified-login cache from `~/.local/state/kb` at `/run/kb-state`. The entrypoint (root only, then drops to UID 1001) copies the login into the container home because `hosts.yml` is mode 600 on the host, and seeds a writable container `kb` state from the host's proven login and canonical role cache. That seed matters: `kb` accepts a login proven by GitHub for up to 24 hours and reads roles from the canonical cache, so a stale host token does not lock the console out. With a working `GH_TOKEN` in `.secret/credentials.env`, `kb` refreshes the cache itself. `KB_IDENTITY` is a claimed login only; it grants nothing without verification. After a stale token passes the 24-hour window, `docker compose restart` re-imports a fresh host login.
+`kb` re-verifies with GitHub every 5 minutes and reads roles from the canonical repository. A container cannot use your macOS keyring, so `GH_TOKEN` in `.secret/credentials.env` (gitignored) is required for durable access: a copied `hosts.yml` alone works only until the cache expires. The entrypoint (root only, then drops to UID 1001) copies the login into the container home because `hosts.yml` is mode 600, and seeds a writable container `kb` state from the host's proven login and canonical role cache so startup works before the first GitHub refresh. `KB_IDENTITY` is a claimed login only; it grants nothing without verification.
 
-`make health` checks `/api/session`, `make logs` follows the container, `make down` stops it. Copy `.env.example` to `.env` to change the host port or bind address. The container never writes to the knowledge or host-state mounts; only its own `kb` cache is writable.
+Compose mounts the two hub clones read-only at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, and the host's `kb` state read-only at `/run/kb-state`. The healthcheck fails when `/api/session` is not authorized. `make health` checks the same endpoint, `make logs` follows the container, `make down` stops it. Copy `.env.example` to `.env` to change the host port or bind address. The container never writes to the knowledge or host-state mounts; only its own `kb` state is writable.
 
 ## Access model
 

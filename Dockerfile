@@ -37,7 +37,7 @@ ENV HOME=/home/console \
 EXPOSE 4310
 
 HEALTHCHECK --interval=30s --timeout=30s --start-period=60s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/api/session" || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT}/api/session" | grep -q '"allowed":true' || exit 1
 
 # Root only long enough to prepare the read-only auth mount and the state volume.
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
