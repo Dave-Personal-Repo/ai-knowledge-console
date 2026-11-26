@@ -147,6 +147,15 @@ const COMMANDS = [
   { id: 'validate', label: 'Validate knowledge', group: 'read', description: 'Check metadata, links, duplicates and secrets.', argv: () => ['validate'] },
   { id: 'capabilities', label: 'Capabilities', group: 'read', description: 'Commands available to the current hub identity.', argv: () => ['capabilities'] },
   { id: 'membersList', label: 'Member roster', group: 'read', description: 'Full roster from kb.', argv: () => ['members', 'list'] },
+  {
+    id: 'memberAdd',
+    label: 'Add member',
+    group: 'change',
+    mutating: true,
+    description: 'Add a member and invite them on GitHub.',
+    fields: [loginField(), field('role', 'enum', 'Role', { options: ROLES, required: true })],
+    argv: (v) => ['members', 'add', v.login, '--role', v.role],
+  },
   { id: 'rolesList', label: 'AI roles', group: 'read', description: 'Sub-agent roles and their switches.', argv: () => ['roles', 'list'] },
   { id: 'featuresList', label: 'Feature switches', group: 'read', description: 'Features kb runs on this device.', argv: () => ['features', 'list'] },
   { id: 'audit', label: 'Audit events', group: 'read', description: 'Recent authorization audit events.', argv: () => ['audit'] },
@@ -229,7 +238,10 @@ function validateValues(command, values) {
       if (/[\u0000-\u001f]/.test(text) || text.startsWith('-')) return `Invalid ${spec.label}`;
       if (text.length > (spec.max || 200)) return `${spec.label} is too long`;
       if (spec.min && text.trim().length < spec.min) return `${spec.label} is too short`;
-      if (spec.name === 'login' && !LOGIN_RE.test(text)) return 'Invalid login';
+      if (spec.name === 'login') {
+        if (!LOGIN_RE.test(text)) return 'Invalid login';
+        values[spec.name] = text.toLowerCase();
+      }
       if (spec.name === 'scope' && !SCOPE_RE.test(text)) return 'Invalid scope';
     }
   }
@@ -243,7 +255,7 @@ function validateValues(command, values) {
 
 function assertTargetAllowed(session, values, member) {
   if (!['SUPER_OWNER', 'CODE_OWNER'].includes(session?.role)) return 'Owner role required';
-  if (!values?.login || values.login === session.login) return 'Cannot change your own account';
+  if (!values?.login || String(values.login).toLowerCase() === String(session.login).toLowerCase()) return 'Cannot change your own account';
   if (!member) return 'Member not found';
   if (values.action === 'reinstate' && member.status !== 'suspended') return 'Only suspended members can be reinstated here';
   if (session.role === 'CODE_OWNER') {
@@ -572,6 +584,10 @@ const server = http.createServer(async (request, response) => {
         const body = await readJsonBody(request);
         const invalid = validateValues(command, body.values);
         if (invalid) return json(response, 400, { error: invalid });
+        if (command.id === 'memberAdd') {
+          const denied = assertTargetAllowed(session, { ...body.values, action: 'add' }, { role: body.values.role });
+          if (denied) return json(response, 403, { error: denied });
+        }
         if (command.targetAction) {
           const members = readJson(path.join(KB_ROOT, 'members/members.json'))?.members || [];
           const member = members.find((item) => (item.github || item.id) === body.values.login);

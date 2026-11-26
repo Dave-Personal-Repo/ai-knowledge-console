@@ -31,7 +31,7 @@ ENV HOME=/home/console \
     KB_ROOT=/knowledge/ai-knowledge \
     KB_SENSITIVE_ROOT=/knowledge/ai-knowledge-sensitive \
     GH_CONFIG_DIR=/home/console/.config/gh \
-    PATH=/knowledge/ai-knowledge/scripts:${PATH} \
+    PATH=/home/console/.local/bin:/knowledge/ai-knowledge/scripts:${PATH} \
     TZ=UTC
 
 EXPOSE 4310

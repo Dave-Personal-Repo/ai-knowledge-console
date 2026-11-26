@@ -102,3 +102,57 @@ test('CODE_OWNER command catalog hides higher role options', async () => {
   const roleField = payload.commands.find((command) => command.id === 'memberSetRole').fields.find((field) => field.name === 'role');
   assert.deepEqual(roleField.options, ['COLLABORATOR', 'MEMBER']);
 });
+
+test('memberAdd runs the curated kb members add command', async () => {
+  setIdentity('tester-owner', 'SUPER_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberAdd', { values: { login: 'new-member', role: 'MEMBER', confirm: true } });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.ok, true);
+  assert.match(result.stdout, /stub:members add new-member --role MEMBER/);
+});
+
+test('memberAdd requires confirmation', async () => {
+  setIdentity('tester-owner', 'SUPER_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberAdd', { values: { login: 'new-member', role: 'MEMBER' } });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /Confirm is required/);
+});
+
+test('memberAdd rejects a flag-like login before building argv', async () => {
+  setIdentity('tester-owner', 'SUPER_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberAdd', { values: { login: '--evil', role: 'MEMBER', confirm: true } });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /Invalid GitHub login/);
+});
+
+test('memberAdd rejects adding the current identity', async () => {
+  setIdentity('tester-code', 'CODE_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberAdd', { values: { login: 'tester-code', role: 'MEMBER', confirm: true } });
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /your own account/);
+});
+
+test('memberAdd rejects an uppercase form of the current identity', async () => {
+  setIdentity('tester-code', 'CODE_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberAdd', { values: { login: 'TESTER-CODE', role: 'MEMBER', confirm: true } });
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /your own account/);
+});
+
+test('CODE_OWNER cannot add an owner and sees only lower role options', async () => {
+  setIdentity('tester-code', 'CODE_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberAdd', { values: { login: 'new-member', role: 'CODE_OWNER', confirm: true } });
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /role/i);
+
+  const catalog = await fetch(`${base}/api/commands`).then((item) => item.json());
+  const roleField = catalog.commands.find((command) => command.id === 'memberAdd').fields.find((field) => field.name === 'role');
+  assert.deepEqual(roleField.options, ['COLLABORATOR', 'MEMBER']);
+});

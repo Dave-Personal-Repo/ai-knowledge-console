@@ -83,7 +83,7 @@ test('redactOutput masks token-like values', () => {
 test('command catalog covers the informative and maintenance commands', () => {
   const ids = [
     'status', 'doctor', 'report', 'publishVerify', 'publish', 'sync', 'triage', 'validate',
-    'capabilities', 'membersList', 'rolesList', 'featuresList', 'audit', 'logs', 'cleanupStatus',
+    'capabilities', 'membersList', 'memberAdd', 'rolesList', 'featuresList', 'audit', 'logs', 'cleanupStatus',
     'cleanupReport', 'cleanupIntent', 'cleanupRun', 'promote', 'memberSetRole', 'memberGrant',
     'memberUngrant', 'memberSuspend', 'memberReinstate',
   ];

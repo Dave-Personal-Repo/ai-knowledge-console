@@ -47,6 +47,36 @@ done
 chown -R console:console "$console_home/.codex" "$console_home/.claude" \
   "$console_home/.config/opencode" "$console_home/.local/share/opencode"
 
+# Host-detected agent binaries are copied as detection-only shims. They make `kb doctor`
+# report the operator's installed tools without trying to run macOS binaries in Linux.
+tool_bin="$console_home/.local/bin"
+mkdir -p "$tool_bin"
+if [ -d "$agent_root/host-tools" ]; then
+  cp -R "$agent_root/host-tools/." "$tool_bin/"
+fi
+if [ -s "$agent_root/opencode-agents.md" ]; then
+  mkdir -p "$console_home/.config/opencode"
+  cp "$agent_root/opencode-agents.md" "$console_home/.config/opencode/AGENTS.md"
+fi
+mkdir -p "$console_home/engineering-ai/policy"
+if [ -s "$agent_root/engineering-ai/policy/ENGINEERING_POLICY.md" ]; then
+  cp "$agent_root/engineering-ai/policy/ENGINEERING_POLICY.md" "$console_home/engineering-ai/policy/ENGINEERING_POLICY.md"
+fi
+
+# `kb members add` commits and pushes with plain git. Give the console user the captured host
+# identity and a GH_TOKEN-backed HTTPS path for the hub's SSH-style origin remote.
+git_config="$console_home/.gitconfig"
+if [ -s "$agent_root/git-identity-name" ] && [ -s "$agent_root/git-identity-email" ]; then
+  git config --file "$git_config" user.name "$(cat "$agent_root/git-identity-name")"
+  git config --file "$git_config" user.email "$(cat "$agent_root/git-identity-email")"
+fi
+if [ -n "${GH_TOKEN:-}" ]; then
+  HOME="$console_home" gh auth setup-git >/dev/null 2>&1 || true
+  git config --file "$git_config" url."https://github.com/".insteadOf git@github.com:
+fi
+chown -R console:console "$tool_bin" "$console_home/.config/opencode" "$console_home/engineering-ai"
+if [ -f "$git_config" ]; then chown console:console "$git_config"; fi
+
 # kb reads roles and licence status from a canonical-file cache in STATE. Seed it from the
 # host's proven login and cache, then let kb own a writable copy: a stale host gh token still
 # works, and a working GH_TOKEN can refresh it without writing through the read-only mount.
