@@ -262,7 +262,7 @@ function renderDashboard() {
       <p>Every verified lesson, rule and policy from the canonical hub — searchable, readable and gated to owners. No command memorisation required.</p>
       <div class="hero-actions">
         <button class="primary-button" data-action="go-library">${icon('book')} Browse knowledge</button>
-        <button class="ghost-button" data-action="open-palette">${icon('search')} Quick find <kbd>⌘K</kbd></button>
+        <button class="ghost-button" data-action="open-palette">${icon('search')} Quick find <kbd>⌘/Ctrl K</kbd></button>
       </div>
     </section>
 

@@ -94,15 +94,25 @@ function redactOutput(text) {
     .replace(/(token[=:\s]+)[A-Za-z0-9._-]{10,}/gi, '$1[REDACTED]');
 }
 
-function runKb(argv, runner = spawnSync) {
+function quoteCmdArg(value) {
+  const text = String(value ?? '');
+  if (!text || /[%!"&|<>()^\r\n]/.test(text)) throw new TypeError(`unsafe cmd.exe argument: ${text}`);
+  return `"${text}"`;
+}
+
+function runKb(argv, runner = spawnSync, platform = process.platform, bin = KB_BIN) {
   const started = Date.now();
-  const result = runner(KB_BIN, argv, {
+  const options = {
     cwd: KB_ROOT,
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: OUTPUT_LIMIT * 4,
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  };
+  const isWindowsShim = platform === 'win32' && /\.cmd$/i.test(bin);
+  const result = isWindowsShim
+    ? runner('cmd.exe', ['/d', '/c', quoteCmdArg(bin), ...argv.map(quoteCmdArg)], options)
+    : runner(bin, argv, options);
   const exitCode = result.status ?? 1;
   return {
     command: `kb ${argv.join(' ')}`,
@@ -649,6 +659,7 @@ module.exports = {
   visibleMembers,
   filterInventoryForRole,
   runKb,
+  quoteCmdArg,
   redactOutput,
   COMMANDS,
   buildArgv,

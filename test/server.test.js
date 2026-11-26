@@ -2,6 +2,9 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const {
   ROLE_RANK,
@@ -9,6 +12,7 @@ const {
   visibleMembers,
   filterInventoryForRole,
   runKb,
+  quoteCmdArg,
   redactOutput,
   COMMANDS,
   validateValues,
@@ -206,4 +210,47 @@ test('other server errors do not open a browser', () => {
   const opened = [];
   assert.equal(handleServerError({ code: 'EACCES' }, 'http://127.0.0.1:4310', (target) => opened.push(target)), false);
   assert.deepEqual(opened, []);
+});
+
+test('windows cmd kb binary runs through cmd.exe', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kconsole-kb-'));
+  const bin = path.join(dir, 'kb.cmd');
+  fs.writeFileSync(bin, '@echo off\r\necho %*\r\n');
+  const calls = [];
+  const stub = (command, args, options) => {
+    calls.push({ command, args, options });
+    return { status: 0, stdout: `${args.join(' ')}\n`, stderr: '', error: null };
+  };
+
+  const result = runKb(['whoami'], stub, 'win32', bin);
+
+  assert.equal(calls[0].command, 'cmd.exe');
+  assert.deepEqual(calls[0].args.slice(0, 3), ['/d', '/c', quoteCmdArg(bin)]);
+  assert.equal(calls[0].args[3], quoteCmdArg('whoami'));
+  assert.match(result.stdout, /whoami/);
+  assert.doesNotMatch(result.stderr, /EINVAL/);
+  assert.equal(result.ok, true);
+});
+
+test('cmd argument quoting rejects shell metacharacters', () => {
+  assert.equal(quoteCmdArg('C:\\Program Files\\kb.cmd'), '"C:\\Program Files\\kb.cmd"');
+  for (const value of ['a%b', 'a!b', 'a"b', 'a&b', 'a|b', 'a<b', 'a>b', 'a^b', 'a\nb']) {
+    assert.throws(() => quoteCmdArg(value), TypeError, value);
+  }
+});
+
+test('compose defaults are overridable on every host', () => {
+  const compose = fs.readFileSync(path.join(__dirname, '..', 'docker-compose.yml'), 'utf8');
+  assert.match(compose, /\$\{KCONSOLE_HOST_HOME:-\$\{HOME\}\}/);
+  assert.match(compose, /\$\{KCONSOLE_GH_CONFIG:-\$\{HOME\}\/\.config\/gh\}/);
+  assert.match(compose, /\$\{KCONSOLE_KB_STATE:-\$\{HOME\}\/\.local\/state\/kb\}/);
+});
+
+test('ui shows both shortcut labels', () => {
+  const root = path.join(__dirname, '..', 'public');
+  for (const file of ['index.html', 'app.js']) {
+    const text = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.match(text, /⌘\/Ctrl K/, file);
+    assert.doesNotMatch(text, /⌘K(?!\/)/, file);
+  }
 });

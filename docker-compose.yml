@@ -29,11 +29,11 @@ services:
 
     volumes:
       # Writable: the console can run kb mutations against the live host hubs.
-      - ${HOME}/knowledge/ai-knowledge:/knowledge/ai-knowledge:rw
-      - ${HOME}/knowledge/ai-knowledge-sensitive:/knowledge/ai-knowledge-sensitive:rw
+      - ${KCONSOLE_HOST_HOME:-${HOME}}/knowledge/ai-knowledge:/knowledge/ai-knowledge:rw
+      - ${KCONSOLE_HOST_HOME:-${HOME}}/knowledge/ai-knowledge-sensitive:/knowledge/ai-knowledge-sensitive:rw
       # Host gh login (mode 600) is copied into the container by the entrypoint.
-      - ${HOME}/.config/gh:/run/gh:ro
+      - ${KCONSOLE_GH_CONFIG:-${HOME}/.config/gh}:/run/gh:ro
       # Seeded into the container's writable kb state so a stale gh token cannot lock the console out.
-      - ${HOME}/.local/state/kb:/run/kb-state:ro
+      - ${KCONSOLE_KB_STATE:-${HOME}/.local/state/kb}:/run/kb-state:ro
       # Host agent logins/provider config, refreshed by `make auth`/`make restart`.
       - ./.agent-auth:/run/agent-auth:ro

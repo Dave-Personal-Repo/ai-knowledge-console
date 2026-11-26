@@ -22,6 +22,14 @@ Follows the same shape as `auto-review-pr-bot`: non-root runtime, `env_file`, wr
 ```bash
 mkdir -p .secret && chmod 700 .secret
 printf 'GH_TOKEN=%s\n' "$(gh auth token)" > .secret/credentials.env && chmod 600 .secret/credentials.env
+```
+On Windows (PowerShell):
+```powershell
+New-Item -ItemType Directory -Force .secret | Out-Null
+"GH_TOKEN=$(gh auth token)" | Set-Content -NoNewline .secret\credentials.env
+```
+On both hosts:
+```bash
 make
 # prints every target
 make up
@@ -30,13 +38,13 @@ make restart
 # same thing after a clean container down
 ```
 
-`make up` and `make restart` both run `scripts/agent-auth.sh`, then `scripts/docker-up.sh`. The latter rebuilds the image, waits for an authorised `/api/session`, prunes superseded images, and opens the dashboard on the host — including when the container was already running. Use `./scripts/docker-up.sh --no-build` to reuse the current image, `--no-open` or `OPEN_BROWSER=0` to stay headless, and `make auth` to refresh only the copied state.
+`make up` and `make restart` both run `node scripts/agent-auth.js`, then `node scripts/docker-up.js`. The latter rebuilds the image, waits for an authorised `/api/session`, prunes superseded images, and opens the dashboard on the host — including when the container was already running. The same steps are available as `npm run auth`, `npm run up`, `npm run restart` and `npm run prune` without `make`. Use `node scripts/docker-up.js --no-build` to reuse the current image, `--no-open` or `OPEN_BROWSER=0` to stay headless, and `make auth` to refresh only the copied state.
 
 `make auth` copies host state into gitignored `.agent-auth/`: `~/.local/share/opencode/auth.json`, `~/.config/opencode/opencode.jsonc` (including the `openai` and `anthropic` provider entries), `~/.config/opencode/AGENTS.md`, `~/.codex`, `~/.claude`, and `~/engineering-ai/policy/ENGINEERING_POLICY.md`. It also records the host git identity and writes detection-only shims for the agent CLIs found on the host (`claude`, `opencode`, `codex`, `gemini`, `copilot`, `junie`). The container entrypoint installs them into its own disposable home. Missing sources become empty placeholders so the console still starts. The copies are made readable by the container user (UID 1001); do not commit `.agent-auth/`. Override the source root with `AGENT_AUTH_SOURCE_HOME` or the target with `AGENT_AUTH_DIR`. `kb doctor` therefore reports host-installed Claude, Codex and OpenCode agents and their configured markers without executing macOS binaries in the Linux container; Gemini, Copilot and Junie detection is installation-only, and live agent runs still need `npm start` on the host.
 
 `kb` re-verifies with GitHub every 5 minutes and reads roles from the canonical repository. A container cannot use your macOS keyring, so `GH_TOKEN` in `.secret/credentials.env` (gitignored) is required for durable access: a copied `hosts.yml` alone works only until the cache expires. The entrypoint (root only, then drops to UID 1001) copies the login into the container home because `hosts.yml` is mode 600, and seeds a writable container `kb` state from the host's proven login and canonical role cache so startup works before the first GitHub refresh. `KB_IDENTITY` is a claimed login only; it grants nothing without verification.
 
-Compose mounts the two hub clones writable at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, the host's `kb` state read-only at `/run/kb-state`, and `.agent-auth` read-only at `/run/agent-auth`. The healthcheck fails when `/api/session` is not authorized. `make status` shows container state and health, `make health` prints the gate JSON, `make logs` follows the container, `make logs-tail` prints the last 200 lines, `make ui` opens the dashboard, `make shell` opens a container shell, `make down` stops it, and `make clean` asks before deleting the state volume. Copy `.env.example` to `.env` to change the host port or bind address. Changing commands such as `sync`, `publish`, `cleanup run`, member updates and **Add member** run inside the container against the live clones; **Add member** sends GitHub invitations, updates `members/members.json` and is configured to push to hub `main` using the captured host git identity and the `GH_TOKEN`-backed HTTPS credential helper (verified with git identity and `ls-remote`; no real add was executed). Host-state and agent-auth mounts remain read-only; the container's own `kb` state and the two hub clones are writable.
+Compose mounts the two hub clones writable at `/knowledge/ai-knowledge` and `/knowledge/ai-knowledge-sensitive`, the host's `kb` state read-only at `/run/kb-state`, and `.agent-auth` read-only at `/run/agent-auth`. The healthcheck fails when `/api/session` is not authorized. `make status` shows container state and health, `make health` prints the gate JSON, `make logs` follows the container, `make logs-tail` prints the last 200 lines, `make ui` opens the dashboard, `make shell` opens a container shell, `make down` stops it, and `make clean` asks before deleting the state volume. Copy `.env.example` to `.env` to change the host port or bind address. On Windows, set `KCONSOLE_HOST_HOME`, `KCONSOLE_GH_CONFIG` and `KCONSOLE_KB_STATE` (forward slashes) because Compose's `${HOME}` is not the same as PowerShell's `$HOME`; set `KB_BIN` to a `.cmd` launcher if `kb` is not on PATH. Changing commands such as `sync`, `publish`, `cleanup run`, member updates and **Add member** run inside the container against the live clones; **Add member** sends GitHub invitations, updates `members/members.json` and is configured to push to hub `main` using the captured host git identity and the `GH_TOKEN`-backed HTTPS credential helper (verified with git identity and `ls-remote`; no real add was executed). Host-state and agent-auth mounts remain read-only; the container's own `kb` state and the two hub clones are writable.
 
 ## Access model
 
