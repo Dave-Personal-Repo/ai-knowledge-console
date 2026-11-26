@@ -7,17 +7,42 @@ const os = require('node:os');
 const path = require('node:path');
 
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kconsole-test-'));
-const stub = path.join(stateDir, 'kb');
-fs.writeFileSync(stub, `#!/bin/sh
-if [ "$1" = "whoami" ]; then
-  printf 'Identity\\n- User: %s\\n- Role: %s\\n- Privilege Level: 0 (label only)\\n' "$(cat "$TEST_STATE_DIR/login")" "$(cat "$TEST_STATE_DIR/role")"
-  exit 0
-fi
-printf 'stub:%s\\n' "$*"
-exit 0
-`, { mode: 0o755 });
-process.env.KB_BIN = stub;
 process.env.TEST_STATE_DIR = stateDir;
+
+// The stub must run on both POSIX and Windows CI, and the hub root must exist
+// before server.js resolves it; otherwise getSession() fails with ENOENT.
+const hubRoot = path.join(stateDir, 'hub');
+fs.mkdirSync(path.join(hubRoot, 'members'), { recursive: true });
+fs.mkdirSync(path.join(hubRoot, 'config'), { recursive: true });
+fs.writeFileSync(path.join(hubRoot, 'members', 'members.json'), JSON.stringify({ members: [
+  { id: 'dave-bfi', github: 'dave-bfi', role: 'SUPER_OWNER', status: 'active' },
+  { id: 'ayumargareth', github: 'ayumargareth', role: 'CODE_OWNER', status: 'active' },
+  { id: 'erricbfi', github: 'erricbfi', role: 'COLLABORATOR', status: 'active' },
+] }));
+fs.writeFileSync(path.join(hubRoot, 'config', 'rbac.json'), JSON.stringify({ roles: {} }));
+fs.writeFileSync(path.join(hubRoot, 'config', 'kb.json'), '{}');
+process.env.KB_ROOT = hubRoot;
+process.env.KB_SENSITIVE_ROOT = path.join(stateDir, 'no-sensitive-hub');
+
+const stubJs = path.join(stateDir, 'kb.js');
+fs.writeFileSync(stubJs, [
+  "const fs = require('node:fs');",
+  "const path = require('node:path');",
+  "const dir = process.env.TEST_STATE_DIR;",
+  "const args = process.argv.slice(2);",
+  "if (args[0] === 'whoami') {",
+  "  const login = fs.readFileSync(path.join(dir, 'login'), 'utf8').trim();",
+  "  const role = fs.readFileSync(path.join(dir, 'role'), 'utf8').trim();",
+  "  process.stdout.write('Identity\\n- User: ' + login + '\\n- Role: ' + role + '\\n- Privilege Level: 0 (label only)\\n');",
+  "} else {",
+  "  process.stdout.write('stub:' + args.join(' ') + '\\n');",
+  "}",
+].join('\n'));
+const stub = process.platform === 'win32' ? path.join(stateDir, 'kb.cmd') : path.join(stateDir, 'kb');
+fs.writeFileSync(stub, process.platform === 'win32'
+  ? `@echo off\r\n"${process.execPath}" "${stubJs}" %*\r\n`
+  : `#!/bin/sh\nexec "${process.execPath}" "${stubJs}" "$@"\n`, { mode: 0o755 });
+process.env.KB_BIN = stub;
 
 function setIdentity(login, role) {
   fs.writeFileSync(path.join(stateDir, 'login'), login);
