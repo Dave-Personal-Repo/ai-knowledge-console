@@ -14,6 +14,7 @@ const {
   runKb,
   getSession,
   kbInvocation,
+  cmdText,
   quoteCmdArg,
   redactOutput,
   COMMANDS,
@@ -214,7 +215,7 @@ test('other server errors do not open a browser', () => {
   assert.deepEqual(opened, []);
 });
 
-test('windows cmd kb binary runs through cmd.exe with verbatim arguments', () => {
+test('windows cmd kb binary runs through cmd.exe with an outer quote pair', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kconsole-kb-'));
   const bin = path.join(dir, 'kb.cmd');
   fs.writeFileSync(bin, '@echo off\r\necho %*\r\n');
@@ -227,20 +228,21 @@ test('windows cmd kb binary runs through cmd.exe with verbatim arguments', () =>
   const result = runKb(['whoami'], stub, 'win32', bin);
 
   assert.equal(calls[0].command, 'cmd.exe');
-  assert.deepEqual(calls[0].args, ['/d', '/c', `${quoteCmdArg(bin)} ${quoteCmdArg('whoami')}`]);
+  assert.deepEqual(calls[0].args, ['/d', '/s', '/c', `"${quoteCmdArg(bin)} ${quoteCmdArg('whoami')}"`]);
   assert.equal(calls[0].options.windowsVerbatimArguments, true);
   assert.match(result.stdout, /whoami/);
   assert.doesNotMatch(result.stderr, /EINVAL/);
   assert.equal(result.ok, true);
 });
 
-test('cmd argument quoting keeps free text literal and escapes percent signs', () => {
-  assert.equal(quoteCmdArg('C:\\Program Files\\kb.cmd'), '"C:\\Program Files\\kb.cmd"');
-  assert.equal(quoteCmdArg('fix & tidy'), '"fix & tidy"');
-  assert.equal(quoteCmdArg('a|b<c>d^e!f'), '"a|b<c>d^e!f"');
+test('cmd argument escaping keeps free text literal and escapes percent signs', () => {
+  assert.equal(cmdText('C:\\Program Files\\kb.cmd'), 'C:\\Program Files\\kb.cmd');
+  assert.equal(cmdText('fix & tidy'), 'fix & tidy');
+  assert.equal(cmdText('a|b<c>d^e!f'), 'a|b<c>d^e!f');
+  assert.equal(cmdText('100% done'), '100%% done');
   assert.equal(quoteCmdArg('100% done'), '"100%% done"');
   for (const value of ['a"b', 'a\nb', 'a\rb', 'a\0b']) {
-    assert.throws(() => quoteCmdArg(value), TypeError, value);
+    assert.throws(() => cmdText(value), TypeError, value);
   }
 });
 

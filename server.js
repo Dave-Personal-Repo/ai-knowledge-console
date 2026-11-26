@@ -94,18 +94,22 @@ function redactOutput(text) {
     .replace(/(token[=:\s]+)[A-Za-z0-9._-]{10,}/gi, '$1[REDACTED]');
 }
 
-function quoteCmdArg(value) {
+function cmdText(value) {
   const text = String(value ?? '');
-  // Inside double quotes cmd.exe treats & | < > ( ) and ^ literally. Only
-  // quotes and control characters cannot be represented; % needs doubling
-  // because cmd.exe expands %VAR% even inside quotes.
+  // Quotes and control characters cannot be represented in a cmd.exe command
+  // line. cmd.exe expands %VAR% even inside quotes, so double literal percent.
   if (/["\r\n\0]/.test(text)) throw new TypeError(`unsafe cmd.exe argument: ${text}`);
-  return `"${text.replace(/%/g, '%%')}"`;
+  return text.replace(/%/g, '%%');
+}
+
+function quoteCmdArg(value) {
+  return `"${cmdText(value)}"`;
 }
 
 // Both the session gate and the command runner must launch the same `kb`.
-// On Windows a documented .cmd/.bat shim needs cmd.exe, and Node must not
-// re-quote arguments we have already quoted for cmd (verbatim arguments).
+// cmd.exe /s /c strips one outer quote pair, so the quoted shim and arguments
+// need one more pair around the whole line. Plain /c would strip the shim's
+// own quotes instead and the launcher would never run.
 function kbInvocation(argv, platform = process.platform, bin = KB_BIN) {
   let resolved = bin;
   if (platform === 'win32' && !path.extname(resolved)) {
@@ -123,11 +127,8 @@ function kbInvocation(argv, platform = process.platform, bin = KB_BIN) {
     }
   }
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(resolved)) {
-    return {
-      command: 'cmd.exe',
-      args: ['/d', '/c', [quoteCmdArg(resolved), ...argv.map(quoteCmdArg)].join(' ')],
-      verbatim: true,
-    };
+    const line = [quoteCmdArg(resolved), ...argv.map(quoteCmdArg)].join(' ');
+    return { command: 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], verbatim: true };
   }
   return { command: resolved, args: argv, verbatim: false };
 }
@@ -693,6 +694,7 @@ module.exports = {
   runKb,
   getSession,
   kbInvocation,
+  cmdText,
   quoteCmdArg,
   redactOutput,
   COMMANDS,
