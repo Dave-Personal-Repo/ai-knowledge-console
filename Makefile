@@ -22,21 +22,21 @@ help: ## Show this help
 # ---------------------------------------------------------------- setup
 
 auth: ## Copy host OpenAI, Anthropic, OpenCode and Codex/Claude state into .agent-auth/
-	@./scripts/agent-auth.sh
+	@node scripts/agent-auth.js
 
 opencode-auth: auth ## Alias for auth
 
 # ---------------------------------------------------------------- run
 
 up: auth ## Refresh auth, build, start detached, and open the dashboard
-	@./scripts/docker-up.sh
+	@node scripts/docker-up.js
 
 down: ## Stop the container (keeps its state volume)
 	@$(COMPOSE) down
 
 restart: auth ## Refresh auth, rebuild, and recreate the container
 	@$(COMPOSE) down
-	@./scripts/docker-up.sh
+	@node scripts/docker-up.js
 
 logs: ## Follow the logs (Ctrl-C stops following, the console keeps running)
 	@$(COMPOSE) logs -f --tail=200
@@ -73,10 +73,10 @@ shell: ## Open a shell in the running container
 
 build: ## Build the image without starting it (old images are deleted)
 	@$(COMPOSE) build
-	@./scripts/docker-prune.sh
+	@node scripts/docker-prune.js
 
 prune: ## Delete old console images left by earlier builds
-	@./scripts/docker-prune.sh
+	@node scripts/docker-prune.js
 
 test: ## Run the local test suite
 	@npm test
