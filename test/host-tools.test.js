@@ -122,3 +122,8 @@ test('docker-prune is nonfatal without docker', () => {
   const out = run('docker-prune.js', [], { env: { ...process.env, PATH: '' } });
   assert.equal(out.toString().trim(), '');
 });
+
+test('npm test discovers tests without a shell glob', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts.test, 'node --test');
+});
