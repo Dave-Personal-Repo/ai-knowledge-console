@@ -965,10 +965,16 @@ html[data-theme="light"] .filter-chip.active { color: #fff; }
 .member-dialog-body .dialog-head p, .command-dialog-body .dialog-head p, .role-dialog-body .dialog-head p { margin: 0; font-size: 11.5px; color: var(--text-muted); }
 .member-dialog-body .command-grid, .command-dialog .command-grid { grid-template-columns: 1fr; }
 .member-dialog-body .scope-custom[hidden] { display: none; }
-.role-dialog { width: min(520px, calc(100vw - 32px)); }
-.permission-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-.permission-list li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
-.permission-list code { font-size: 11px; color: var(--text-soft); }
+.role-dialog { width: min(620px, calc(100vw - 32px)); }
+.role-dialog-body .dialog-head p.permission-context { margin-top: 6px; color: var(--text-soft); }
+.permission-groups { display: grid; gap: 12px; }
+.permission-group { padding: 13px 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.permission-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.permission-group-head h4 { margin: 0; font-size: 12px; letter-spacing: .02em; color: var(--text); }
+.permission-group-head span { padding: 1px 7px; border: 1px solid var(--border); border-radius: 99px; font-size: 10px; color: var(--text-muted); }
+.permission-group p { margin: 4px 0 10px; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+.permission-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.permission-chip { padding: 4px 7px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-soft); font-size: 10.5px; line-height: 1.4; color: var(--text-soft); }
 .role-card .ghost-button { margin-top: 14px; }
 .compact-command { display: flex; flex-direction: column; }
 .compact-command .command-actions { margin-top: auto; padding-top: 14px; }

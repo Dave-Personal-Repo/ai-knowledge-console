@@ -93,3 +93,37 @@ test('docSection maps document kinds to the correct menu', () => {
   assert.equal(docSection('general:note'), 'library');
   assert.equal(docSection('missing:doc'), 'library');
 });
+
+test('role permission dialog shows grouped explanations without disclosure widgets', () => {
+  for (const hook of [
+    'PERMISSION_GROUPS',
+    'function groupPermissions(permissions)',
+    'Role capability = what this role can do. Scopes control which knowledge it can reach.',
+    'permission-group',
+    'esc(permission)',
+  ]) {
+    assert.ok(app.includes(hook), `app.js must contain ${hook}`);
+  }
+  assert.match(css, /\.permission-group/);
+  assert.doesNotMatch(app, /<details>/);
+});
+
+test('groupPermissions buckets known and unknown permissions without dropping any', () => {
+  const groupsSource = app.match(/const PERMISSION_GROUPS = \[[\s\S]*?\n\];/)[0];
+  const helperSource = app.match(/function groupPermissions\(permissions\) \{[\s\S]*?\n\}/)[0];
+  const groupPermissions = new Function(`${groupsSource}\n${helperSource}\nreturn groupPermissions;`)();
+  const permissions = [
+    'knowledge.sensitive.read',
+    'repository.publish',
+    'rbac.permissions.manage',
+    'future.custom.permission',
+    'contribution.review',
+  ];
+  const grouped = groupPermissions(permissions);
+  const groupFor = (permission) => grouped.find((group) => group.permissions.includes(permission))?.label;
+  assert.equal(groupFor('knowledge.sensitive.read'), 'Knowledge & maintenance');
+  assert.equal(groupFor('repository.publish'), 'Repository & sync');
+  assert.equal(groupFor('rbac.permissions.manage'), 'Governance & security');
+  assert.equal(groupFor('future.custom.permission'), 'Other');
+  assert.deepEqual(grouped.flatMap((group) => group.permissions).sort(), [...permissions].sort());
+});

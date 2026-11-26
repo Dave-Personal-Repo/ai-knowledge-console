@@ -24,6 +24,58 @@ const ICONS = {
   file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>',
 };
 
+const PERMISSION_GROUPS = [
+  {
+    prefixes: ['agent.', 'automation.', 'command_registry.', 'system_prompts.'],
+    label: 'Agent & automation',
+    description: 'Discover commands, call models, tools and integrations, run workflows, and manage runtime or prompts.',
+  },
+  {
+    prefixes: ['knowledge.'],
+    label: 'Knowledge & maintenance',
+    description: 'Read, use, write and delete knowledge, including sensitive content and maintenance tasks.',
+  },
+  {
+    prefixes: ['repository.', 'sync.'],
+    label: 'Repository & sync',
+    description: 'Clone, read, write, publish and restore repositories, and sync content between them.',
+  },
+  {
+    prefixes: ['contribution.'],
+    label: 'Contributions',
+    description: 'Submit contributions and review, approve, merge or reject exceptions.',
+  },
+  {
+    prefixes: ['members.', 'code_owners.', 'collaborators.', 'super_owners.', 'ownership.'],
+    label: 'People & ownership',
+    description: 'Read and manage members, owners and collaborators, and transfer ownership.',
+  },
+  {
+    prefixes: ['rbac.', 'security.', 'policies.', 'rules.', 'audit_logs.'],
+    label: 'Governance & security',
+    description: 'Read policies, rules and audit logs; manage roles, permissions and security settings.',
+  },
+  {
+    prefixes: ['personal.'],
+    label: 'Personal config',
+    description: 'Use personal configuration.',
+  },
+  {
+    prefixes: [],
+    label: 'Other',
+    description: 'Permissions outside the known families.',
+  },
+];
+
+function groupPermissions(permissions) {
+  const buckets = PERMISSION_GROUPS.map((group) => ({ ...group, permissions: [] }));
+  for (const permission of [...permissions].sort()) {
+    const bucket = buckets.find((candidate) => candidate.prefixes.some((prefix) => permission.startsWith(prefix))) || buckets[buckets.length - 1];
+    bucket.permissions.push(permission);
+  }
+  return buckets.filter((bucket) => bucket.permissions.length > 0);
+}
+
 const state = {
   session: null,
   inventory: null,
@@ -653,13 +705,25 @@ function openRoleDialog(role) {
   const permissions = state.inventory.roleScopes?.[role];
   if (!Array.isArray(permissions)) return;
   const label = role.replace('_', ' ');
+  const groups = groupPermissions(permissions);
   roleDialogBody.innerHTML = `
     <div class="dialog-head">
       <span class="eyebrow">Role permissions</span>
       <h3 id="role-dialog-title">${esc(label)}</h3>
       <p>${permissions.length} permission${permissions.length === 1 ? '' : 's'} visible in this session.</p>
+      <p class="permission-context">Role capability = what this role can do. Scopes control which knowledge it can reach.</p>
     </div>
-    <ul class="permission-list">${[...permissions].sort().map((permission) => `<li><span class="dot"></span><code>${esc(permission)}</code></li>`).join('')}</ul>`;
+    <div class="permission-groups">
+      ${groups.map((group) => `
+        <section class="permission-group">
+          <div class="permission-group-head">
+            <h4>${esc(group.label)}</h4>
+            <span>${group.permissions.length}</span>
+          </div>
+          <p>${esc(group.description)}</p>
+          <div class="permission-chips">${group.permissions.map((permission) => `<code class="permission-chip">${esc(permission)}</code>`).join('')}</div>
+        </section>`).join('')}
+    </div>`;
   if (!roleDialog.open) roleDialog.showModal();
 }
 
