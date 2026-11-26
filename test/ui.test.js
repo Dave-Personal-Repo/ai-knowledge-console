@@ -9,6 +9,7 @@ const read = (name) => fs.readFileSync(path.join(__dirname, '..', 'public', name
 const html = read('index.html');
 const app = read('app.js');
 const css = read('styles.css');
+const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 
 test('member detail popup shell exists', () => {
   assert.match(html, /id="member-dialog"/);
@@ -39,6 +40,13 @@ test('hub operations commands open in a dialog', () => {
   assert.doesNotMatch(html, /data-open-command/);
   assert.match(css, /\.command-dialog/);
   for (const hook of ['openCommandDialog', 'data-open-command', 'bindDialog', 'commandForm(command)']) {
+    assert.ok(app.includes(hook), `app.js must contain ${hook}`);
+  }
+  assert.ok(serverSource.includes("default: 'MEMBER'"), 'server.js must default role fields to MEMBER');
+});
+
+test('member action forms render server-provided option labels and require a choice', () => {
+  for (const hook of ['optionLabels', 'Choose a member…', 'spec.required']) {
     assert.ok(app.includes(hook), `app.js must contain ${hook}`);
   }
 });

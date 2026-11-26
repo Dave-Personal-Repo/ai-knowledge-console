@@ -14,6 +14,7 @@ const {
   validateValues,
   buildArgv,
   assertTargetAllowed,
+  publicCommand,
   browserCommand,
   shouldOpenBrowser,
   handleServerError,
@@ -24,6 +25,17 @@ function command(id) {
   assert.ok(found, `command ${id} must exist`);
   return found;
 }
+
+const member = (login, role, status) => ({ id: login, github: login, display: login, role, status, scopes: [], joined: '' });
+const pickerRoster = [
+  member('owner', 'SUPER_OWNER', 'active'),
+  member('peer', 'CODE_OWNER', 'active'),
+  member('working', 'COLLABORATOR', 'active'),
+  member('resting', 'MEMBER', 'suspended'),
+  member('gone', 'COLLABORATOR', 'removed'),
+  member('waiting', 'MEMBER', 'invited'),
+  member('sealed', 'MEMBER', 'revoked'),
+];
 
 test('role rank orders SUPER_OWNER above CODE_OWNER', () => {
   assert.ok(ROLE_RANK.SUPER_OWNER > ROLE_RANK.CODE_OWNER);
@@ -85,9 +97,42 @@ test('command catalog covers the informative and maintenance commands', () => {
     'status', 'doctor', 'report', 'publishVerify', 'publish', 'sync', 'triage', 'validate',
     'capabilities', 'membersList', 'memberAdd', 'rolesList', 'featuresList', 'audit', 'logs', 'cleanupStatus',
     'cleanupReport', 'cleanupIntent', 'cleanupRun', 'promote', 'memberSetRole', 'memberGrant',
-    'memberUngrant', 'memberSuspend', 'memberReinstate',
+    'memberUngrant', 'memberSuspend', 'memberRemove', 'memberReinstate',
   ];
   assert.deepEqual(COMMANDS.map((item) => item.id), ids);
+});
+
+test('member commands expose only active, visible, non-self login options', () => {
+  const publicCommandFor = publicCommand(command('memberSetRole'), { login: 'owner', role: 'SUPER_OWNER' }, pickerRoster);
+  const loginField = publicCommandFor.fields.find((field) => field.name === 'login');
+  assert.deepEqual(loginField.options, ['peer', 'working']);
+  assert.deepEqual(loginField.optionLabels, ['peer — CODE OWNER · active', 'working — COLLABORATOR · active']);
+});
+
+test('reinstate exposes only suspended member options', () => {
+  const publicCommandFor = publicCommand(command('memberReinstate'), { login: 'owner', role: 'SUPER_OWNER' }, pickerRoster);
+  const loginField = publicCommandFor.fields.find((field) => field.name === 'login');
+  assert.deepEqual(loginField.options, ['resting']);
+});
+
+test('role fields default to MEMBER and follow session authority', () => {
+  const superField = publicCommand(command('memberAdd'), { login: 'owner', role: 'SUPER_OWNER' }, pickerRoster).fields.find((field) => field.name === 'role');
+  assert.equal(superField.type, 'enum');
+  assert.deepEqual(superField.options, ['SUPER_OWNER', 'CODE_OWNER', 'COLLABORATOR', 'MEMBER']);
+  assert.equal(superField.default, 'MEMBER');
+
+  const loginField = publicCommand(command('memberAdd'), { login: 'owner', role: 'SUPER_OWNER' }, pickerRoster).fields.find((field) => field.name === 'login');
+  assert.equal(loginField.type, 'text');
+
+  const codeField = publicCommand(command('memberAdd'), { login: 'peer', role: 'CODE_OWNER' }, pickerRoster).fields.find((field) => field.name === 'role');
+  assert.deepEqual(codeField.options, ['COLLABORATOR', 'MEMBER']);
+  assert.equal(codeField.default, 'MEMBER');
+});
+
+test('target status is enforced independently of the rendered options', () => {
+  const session = { login: 'owner', role: 'SUPER_OWNER' };
+  assert.match(assertTargetAllowed(session, { login: 'gone', action: 'set-role', targetStatuses: ['active'] }, member('gone', 'COLLABORATOR', 'removed')) || '', /active/i);
+  assert.match(assertTargetAllowed(session, { login: 'working', action: 'reinstate', targetStatuses: ['suspended'] }, member('working', 'COLLABORATOR', 'active')) || '', /suspended/i);
 });
 
 test('report argv uses either days or compare, never both', () => {

@@ -125,6 +125,7 @@ function field(name, type, label, extra = {}) {
 }
 
 const loginField = () => field('login', 'text', 'GitHub login', { required: true });
+const roleField = () => field('role', 'enum', 'Role', { options: ROLES, required: true, default: 'MEMBER' });
 const scopeField = () => field('scope', 'text', 'Scope', { required: true, placeholder: 'company:my-team' });
 const applyField = () => field('apply', 'boolean', 'Apply changes');
 
@@ -153,7 +154,7 @@ const COMMANDS = [
     group: 'change',
     mutating: true,
     description: 'Add a member and invite them on GitHub.',
-    fields: [loginField(), field('role', 'enum', 'Role', { options: ROLES, required: true })],
+    fields: [loginField(), roleField()],
     argv: (v) => ['members', 'add', v.login, '--role', v.role],
   },
   { id: 'rolesList', label: 'AI roles', group: 'read', description: 'Sub-agent roles and their switches.', argv: () => ['roles', 'list'] },
@@ -193,27 +194,38 @@ const COMMANDS = [
     ],
   },
   {
-    id: 'memberSetRole', label: 'Change role', group: 'change', mutating: true, targetAction: 'set-role', description: 'Set a member role.',
+    id: 'memberSetRole', label: 'Change role', group: 'change', mutating: true, targetAction: 'set-role', targetStatuses: ['active'], description: 'Set a member role.',
     fields: [loginField(), field('role', 'enum', 'New role', { options: ROLES, required: true })],
     argv: (v) => ['members', 'set-role', v.login, v.role],
   },
   {
-    id: 'memberGrant', label: 'Grant scope', group: 'change', mutating: true, targetAction: 'grant', description: 'Grant a member an extra scope.',
+    id: 'memberGrant', label: 'Grant scope', group: 'change', mutating: true, targetAction: 'grant', targetStatuses: ['active'], description: 'Grant a member an extra scope.',
     fields: [loginField(), scopeField()],
     argv: (v) => ['members', 'grant', v.login, v.scope],
   },
   {
-    id: 'memberUngrant', label: 'Ungrant scope', group: 'change', mutating: true, targetAction: 'ungrant', description: 'Remove an extra scope.',
+    id: 'memberUngrant', label: 'Ungrant scope', group: 'change', mutating: true, targetAction: 'ungrant', targetStatuses: ['active'], description: 'Remove an extra scope.',
     fields: [loginField(), scopeField()],
     argv: (v) => ['members', 'ungrant', v.login, v.scope],
   },
   {
-    id: 'memberSuspend', label: 'Suspend member', group: 'change', mutating: true, targetAction: 'suspend', description: 'Suspend an active member.',
+    id: 'memberSuspend', label: 'Suspend member', group: 'change', mutating: true, targetAction: 'suspend', targetStatuses: ['active'], description: 'Suspend an active member.',
     fields: [loginField()],
     argv: (v) => ['members', 'suspend', v.login],
   },
   {
-    id: 'memberReinstate', label: 'Reinstate member', group: 'change', mutating: true, targetAction: 'reinstate', description: 'Reinstate a suspended member.',
+    id: 'memberRemove',
+    label: 'Remove member',
+    group: 'change',
+    mutating: true,
+    targetAction: 'remove',
+    targetStatuses: ['active'],
+    description: 'Remove a member and revoke their access.',
+    fields: [loginField()],
+    argv: (v) => ['members', 'remove', v.login],
+  },
+  {
+    id: 'memberReinstate', label: 'Reinstate member', group: 'change', mutating: true, targetAction: 'reinstate', targetStatuses: ['suspended'], description: 'Reinstate a suspended member.',
     fields: [loginField()],
     argv: (v) => ['members', 'reinstate', v.login],
   },
@@ -257,6 +269,9 @@ function assertTargetAllowed(session, values, member) {
   if (!['SUPER_OWNER', 'CODE_OWNER'].includes(session?.role)) return 'Owner role required';
   if (!values?.login || String(values.login).toLowerCase() === String(session.login).toLowerCase()) return 'Cannot change your own account';
   if (!member) return 'Member not found';
+  if (Array.isArray(values.targetStatuses) && values.targetStatuses.length && !values.targetStatuses.includes(member.status)) {
+    return `Only ${values.targetStatuses.join(' or ')} members can be changed here`;
+  }
   if (values.action === 'reinstate' && member.status !== 'suspended') return 'Only suspended members can be reinstated here';
   if (session.role === 'CODE_OWNER') {
     if (!CODE_OWNER_TARGET_ROLES.has(member.role)) return 'Role not allowed';
@@ -543,11 +558,26 @@ function readJsonBody(request) {
   });
 }
 
-function publicCommand(command, sessionRole) {
-  const roleOptions = sessionRole === 'CODE_OWNER' ? [...CODE_OWNER_TARGET_ROLES] : ROLES;
-  const fields = (command.fields || []).map((entry) => (
-    entry.name === 'role' ? { ...entry, options: roleOptions } : entry
-  ));
+function memberOptions(session, members, statuses) {
+  const eligible = visibleMembers(members, session.role)
+    .map((member) => ({ login: member.github || member.id, role: member.role, status: member.status || 'unknown' }))
+    .filter((member) => member.login && statuses.includes(member.status));
+  const records = eligible.filter((member) => member.login.toLowerCase() !== String(session.login).toLowerCase());
+  return {
+    options: records.map((member) => member.login),
+    optionLabels: records.map((member) => `${member.login} — ${member.role.replace('_', ' ')} · ${member.status}`),
+  };
+}
+
+function publicCommand(command, session, members) {
+  const roleOptions = session.role === 'CODE_OWNER' ? [...CODE_OWNER_TARGET_ROLES] : ROLES;
+  const fields = (command.fields || []).map((entry) => {
+    if (entry.name === 'role') return { ...entry, options: roleOptions, default: 'MEMBER' };
+    if (entry.name === 'login' && command.targetStatuses) {
+      return { ...entry, type: 'enum', ...memberOptions(session, members, command.targetStatuses), placeholder: 'Choose a member…' };
+    }
+    return entry;
+  });
   return {
     id: command.id,
     label: command.label,
@@ -572,7 +602,10 @@ const server = http.createServer(async (request, response) => {
 
     try {
       if (pathname === '/api/inventory') return json(response, 200, filterInventoryForRole(buildInventory(), session.role));
-      if (pathname === '/api/commands') return json(response, 200, { commands: COMMANDS.map((command) => publicCommand(command, session.role)) });
+      if (pathname === '/api/commands') {
+        const members = readJson(path.join(KB_ROOT, 'members/members.json'))?.members || [];
+        return json(response, 200, { commands: COMMANDS.map((command) => publicCommand(command, session, members)) });
+      }
       if (request.method === 'POST' && pathname.startsWith('/api/commands/')) {
         const id = decodeURIComponent(pathname.slice('/api/commands/'.length));
         const command = COMMANDS.find((item) => item.id === id);
@@ -591,7 +624,7 @@ const server = http.createServer(async (request, response) => {
         if (command.targetAction) {
           const members = readJson(path.join(KB_ROOT, 'members/members.json'))?.members || [];
           const member = members.find((item) => (item.github || item.id) === body.values.login);
-          const denied = assertTargetAllowed(session, { ...body.values, action: command.targetAction }, member);
+          const denied = assertTargetAllowed(session, { ...body.values, action: command.targetAction, targetStatuses: command.targetStatuses }, member);
           if (denied) return json(response, 403, { error: denied });
         }
         const result = runKb(buildArgv(command, body.values));
@@ -621,6 +654,7 @@ module.exports = {
   buildArgv,
   validateValues,
   assertTargetAllowed,
+  publicCommand,
   buildInventory,
   browserCommand,
   shouldOpenBrowser,

@@ -565,7 +565,13 @@ function commandField(spec, fieldOptions = {}) {
     </label>`;
   }
   if (spec.type === 'enum') {
-    return `<label class="field-row"><span>${label}</span><select name="${esc(spec.name)}">${(spec.options || []).map((option) => `<option value="${esc(option)}" ${option === spec.default ? 'selected' : ''}>${esc(option.replace('_', ' '))}</option>`).join('')}</select></label>`;
+    const labels = Array.isArray(spec.optionLabels) ? spec.optionLabels : null;
+    const placeholder = spec.placeholder ? `<option value="">${esc(spec.placeholder || 'Choose a member…')}</option>` : '';
+    const options = (spec.options || []).map((option, index) => {
+      const text = labels ? labels[index] : option.replace('_', ' ');
+      return `<option value="${esc(option)}" ${option === spec.default ? 'selected' : ''}>${esc(text)}</option>`;
+    }).join('');
+    return `<label class="field-row"><span>${label}</span><select name="${esc(spec.name)}">${placeholder}${options}</select></label>`;
   }
   const type = spec.type === 'date' ? 'date' : spec.type === 'number' ? 'number' : 'text';
   const placeholder = spec.placeholder ? ` placeholder="${esc(spec.placeholder)}"` : '';
@@ -573,12 +579,7 @@ function commandField(spec, fieldOptions = {}) {
 }
 
 function commandForm(command, options = {}) {
-  const fields = (command.fields || []).map((spec) => {
-    if (spec.name === 'role' && state.session.role === 'CODE_OWNER') {
-      return { ...spec, options: ['COLLABORATOR', 'MEMBER'], default: 'COLLABORATOR' };
-    }
-    return spec;
-  });
+  const fields = command.fields || [];
   return `<form class="command-card" data-command="${esc(command.id)}">
     <div class="command-card-head"><h4>${esc(command.label)}</h4><span class="badge ${command.mutating ? 'proposed' : 'policy'}">${command.mutating ? 'changes hub' : 'read only'}</span></div>
     <p>${esc(command.description)}</p>
@@ -815,6 +816,12 @@ async function runCommand(form) {
   const command = state.commands.find((item) => item.id === form.dataset.command);
   if (!command) return;
   const values = formValues(form, command);
+  for (const spec of command.fields || []) {
+    if (spec.required && !String(values[spec.name] ?? '').trim()) {
+      toast(`${spec.label} is required`, 'error');
+      return;
+    }
+  }
   if (command.mutating && !values.confirm) {
     toast(`Tick the confirmation box before running ${command.label}`, 'error');
     return;

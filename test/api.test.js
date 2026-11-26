@@ -156,3 +156,58 @@ test('CODE_OWNER cannot add an owner and sees only lower role options', async ()
   const roleField = catalog.commands.find((command) => command.id === 'memberAdd').fields.find((field) => field.name === 'role');
   assert.deepEqual(roleField.options, ['COLLABORATOR', 'MEMBER']);
 });
+
+test('memberRemove runs the curated kb members remove command', async () => {
+  setIdentity('tester-owner', 'SUPER_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberRemove', { values: { login: 'erricbfi', confirm: true } });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.ok, true);
+  assert.equal(result.command, 'kb members remove erricbfi');
+  assert.equal(result.stdout, 'stub:members remove erricbfi\n');
+});
+
+test('memberRemove requires confirmation', async () => {
+  setIdentity('tester-owner', 'SUPER_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberRemove', { values: { login: 'erricbfi' } });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /Confirm is required/);
+});
+
+test('memberRemove rejects a flag-like login before building argv', async () => {
+  setIdentity('tester-owner', 'SUPER_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberRemove', { values: { login: '--evil', confirm: true } });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /Invalid GitHub login/);
+});
+
+test('memberRemove rejects removing the current identity', async () => {
+  setIdentity('tester-code', 'CODE_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberRemove', { values: { login: 'tester-code', confirm: true } });
+  assert.equal(response.status, 403);
+  assert.match((await response.json()).error, /your own account/);
+});
+
+test('CODE_OWNER cannot remove an owner or a peer', async () => {
+  setIdentity('tester-code', 'CODE_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  for (const login of ['dave-bfi', 'ayumargareth']) {
+    const response = await post('memberRemove', { values: { login, confirm: true } });
+    assert.equal(response.status, 403, `${login} should be protected`);
+    assert.match((await response.json()).error, /role/i);
+  }
+});
+
+test('CODE_OWNER can remove a collaborator', async () => {
+  setIdentity('tester-code', 'CODE_OWNER');
+  await fetch(`${base}/api/session?fresh=1`);
+  const response = await post('memberRemove', { values: { login: 'erricbfi', confirm: true } });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.command, 'kb members remove erricbfi');
+  assert.equal(result.stdout, 'stub:members remove erricbfi\n');
+});
