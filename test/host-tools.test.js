@@ -57,7 +57,8 @@ test('agent-auth copies config, detects host tools and captures git identity', (
   const detected = fs.readdirSync(tools).sort();
   assert.deepEqual(detected, ['claude', 'opencode']);
   for (const name of detected) {
-    assert.equal(fs.statSync(path.join(tools, name)).mode & 0o111, 0o111);
+    // Windows has no POSIX execute bits, so assert accessibility instead.
+    fs.accessSync(path.join(tools, name), fs.constants.X_OK);
     assert.match(fs.readFileSync(path.join(tools, name), 'utf8'), /cannot run inside this Linux container/);
   }
 });
@@ -92,7 +93,10 @@ test('docker-up uses the existing image and skips the browser', async () => {
   const bin = path.join(dir, 'bin');
   const log = path.join(dir, 'docker.log');
   fs.mkdirSync(bin, { recursive: true });
-  fs.writeFileSync(path.join(bin, 'docker'), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\n`, { mode: 0o755 });
+  const stub = path.join(bin, process.platform === 'win32' ? 'docker.cmd' : 'docker');
+  fs.writeFileSync(stub, process.platform === 'win32'
+    ? `@echo off\r\n>>"${log}" echo %*\r\n`
+    : `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\n`, { mode: 0o755 });
 
   try {
     const { stdout } = await runAsync(process.execPath, [path.join(root, 'scripts', 'docker-up.js'), '--no-build', '--no-open'], {
@@ -126,4 +130,11 @@ test('docker-prune is nonfatal without docker', () => {
 test('npm test discovers tests without a shell glob', () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(pkg.scripts.test, 'node --test');
+});
+
+test('npm up and restart refresh auth like make does on every host', () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  for (const name of ['up', 'restart']) {
+    assert.match(pkg.scripts[name], /^npm run auth && node scripts\/docker-up\.js$/);
+  }
 });

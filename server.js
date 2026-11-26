@@ -96,23 +96,53 @@ function redactOutput(text) {
 
 function quoteCmdArg(value) {
   const text = String(value ?? '');
-  if (!text || /[%!"&|<>()^\r\n]/.test(text)) throw new TypeError(`unsafe cmd.exe argument: ${text}`);
-  return `"${text}"`;
+  // Inside double quotes cmd.exe treats & | < > ( ) and ^ literally. Only
+  // quotes and control characters cannot be represented; % needs doubling
+  // because cmd.exe expands %VAR% even inside quotes.
+  if (/["\r\n\0]/.test(text)) throw new TypeError(`unsafe cmd.exe argument: ${text}`);
+  return `"${text.replace(/%/g, '%%')}"`;
+}
+
+// Both the session gate and the command runner must launch the same `kb`.
+// On Windows a documented .cmd/.bat shim needs cmd.exe, and Node must not
+// re-quote arguments we have already quoted for cmd (verbatim arguments).
+function kbInvocation(argv, platform = process.platform, bin = KB_BIN) {
+  let resolved = bin;
+  if (platform === 'win32' && !path.extname(resolved)) {
+    const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';');
+    outer: for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+      for (const ext of exts) {
+        const candidate = path.join(dir, resolved + ext);
+        try {
+          if (fs.statSync(candidate).isFile()) {
+            resolved = candidate;
+            break outer;
+          }
+        } catch { /* keep looking */ }
+      }
+    }
+  }
+  if (platform === 'win32' && /\.(cmd|bat)$/i.test(resolved)) {
+    return {
+      command: 'cmd.exe',
+      args: ['/d', '/c', [quoteCmdArg(resolved), ...argv.map(quoteCmdArg)].join(' ')],
+      verbatim: true,
+    };
+  }
+  return { command: resolved, args: argv, verbatim: false };
 }
 
 function runKb(argv, runner = spawnSync, platform = process.platform, bin = KB_BIN) {
   const started = Date.now();
-  const options = {
+  const invocation = kbInvocation(argv, platform, bin);
+  const result = runner(invocation.command, invocation.args, {
     cwd: KB_ROOT,
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: OUTPUT_LIMIT * 4,
     stdio: ['ignore', 'pipe', 'pipe'],
-  };
-  const isWindowsShim = platform === 'win32' && /\.cmd$/i.test(bin);
-  const result = isWindowsShim
-    ? runner('cmd.exe', ['/d', '/c', quoteCmdArg(bin), ...argv.map(quoteCmdArg)], options)
-    : runner(bin, argv, options);
+    windowsVerbatimArguments: invocation.verbatim,
+  });
   const exitCode = result.status ?? 1;
   return {
     command: `kb ${argv.join(' ')}`,
@@ -322,15 +352,17 @@ let sessionCache = null;
 let sessionCachedAt = 0;
 const SESSION_TTL = 60_000;
 
-function getSession(force = false) {
+function getSession(force = false, runner = execFileSync, platform = process.platform, bin = KB_BIN) {
   if (!force && sessionCache && Date.now() - sessionCachedAt < SESSION_TTL) return sessionCache;
   let next;
   try {
-    const output = execFileSync(KB_BIN, ['whoami'], {
+    const invocation = kbInvocation(['whoami'], platform, bin);
+    const output = runner(invocation.command, invocation.args, {
       cwd: KB_ROOT,
       encoding: 'utf8',
       timeout: 30_000,
       stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: invocation.verbatim,
     });
     const user = /-\s*User:\s*(\S+)/.exec(output)?.[1] || 'unknown';
     const role = /-\s*Role:\s*(\S+)/.exec(output)?.[1] || 'UNKNOWN';
@@ -659,6 +691,8 @@ module.exports = {
   visibleMembers,
   filterInventoryForRole,
   runKb,
+  getSession,
+  kbInvocation,
   quoteCmdArg,
   redactOutput,
   COMMANDS,

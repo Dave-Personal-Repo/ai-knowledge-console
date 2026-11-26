@@ -12,6 +12,8 @@ const {
   visibleMembers,
   filterInventoryForRole,
   runKb,
+  getSession,
+  kbInvocation,
   quoteCmdArg,
   redactOutput,
   COMMANDS,
@@ -212,7 +214,7 @@ test('other server errors do not open a browser', () => {
   assert.deepEqual(opened, []);
 });
 
-test('windows cmd kb binary runs through cmd.exe', () => {
+test('windows cmd kb binary runs through cmd.exe with verbatim arguments', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kconsole-kb-'));
   const bin = path.join(dir, 'kb.cmd');
   fs.writeFileSync(bin, '@echo off\r\necho %*\r\n');
@@ -225,18 +227,48 @@ test('windows cmd kb binary runs through cmd.exe', () => {
   const result = runKb(['whoami'], stub, 'win32', bin);
 
   assert.equal(calls[0].command, 'cmd.exe');
-  assert.deepEqual(calls[0].args.slice(0, 3), ['/d', '/c', quoteCmdArg(bin)]);
-  assert.equal(calls[0].args[3], quoteCmdArg('whoami'));
+  assert.deepEqual(calls[0].args, ['/d', '/c', `${quoteCmdArg(bin)} ${quoteCmdArg('whoami')}`]);
+  assert.equal(calls[0].options.windowsVerbatimArguments, true);
   assert.match(result.stdout, /whoami/);
   assert.doesNotMatch(result.stderr, /EINVAL/);
   assert.equal(result.ok, true);
 });
 
-test('cmd argument quoting rejects shell metacharacters', () => {
+test('cmd argument quoting keeps free text literal and escapes percent signs', () => {
   assert.equal(quoteCmdArg('C:\\Program Files\\kb.cmd'), '"C:\\Program Files\\kb.cmd"');
-  for (const value of ['a%b', 'a!b', 'a"b', 'a&b', 'a|b', 'a<b', 'a>b', 'a^b', 'a\nb']) {
+  assert.equal(quoteCmdArg('fix & tidy'), '"fix & tidy"');
+  assert.equal(quoteCmdArg('a|b<c>d^e!f'), '"a|b<c>d^e!f"');
+  assert.equal(quoteCmdArg('100% done'), '"100%% done"');
+  for (const value of ['a"b', 'a\nb', 'a\rb', 'a\0b']) {
     assert.throws(() => quoteCmdArg(value), TypeError, value);
   }
+});
+
+test('the session gate uses the same windows cmd invocation as commands', () => {
+  const bin = 'C:/tools/kb.cmd';
+  const calls = [];
+  const stub = (command, args, options) => {
+    calls.push({ command, args, options });
+    return 'Identity\n- User: dave-bfi\n- Role: SUPER_OWNER\n- Privilege Level: 0 (label only)\n';
+  };
+  const expected = kbInvocation(['whoami'], 'win32', bin);
+
+  const session = getSession(true, stub, 'win32', bin);
+
+  assert.deepEqual(calls[0], {
+    command: expected.command,
+    args: expected.args,
+    options: {
+      cwd: calls[0].options.cwd,
+      encoding: 'utf8',
+      timeout: 30_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsVerbatimArguments: true,
+    },
+  });
+  assert.equal(session.login, 'dave-bfi');
+  assert.equal(session.role, 'SUPER_OWNER');
+  assert.equal(session.allowed, true);
 });
 
 test('compose defaults are overridable on every host', () => {

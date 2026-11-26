@@ -7,8 +7,8 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "auth": "node scripts/agent-auth.js",
-    "up": "node scripts/docker-up.js",
-    "restart": "node scripts/docker-up.js",
+    "up": "npm run auth && node scripts/docker-up.js",
+    "restart": "npm run auth && node scripts/docker-up.js",
     "prune": "node scripts/docker-prune.js",
     "check": "node --check server.js && node --check public/app.js && node --check scripts/agent-auth.js && node --check scripts/docker-up.js && node --check scripts/docker-prune.js",
     "test": "node --test"
