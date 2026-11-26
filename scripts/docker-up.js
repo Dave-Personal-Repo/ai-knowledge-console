@@ -90,7 +90,12 @@ async function main() {
   const compose = ['compose', 'up', '-d'];
   if (build) compose.push('--build');
   console.log(`Starting the console at ${uiUrl}`);
-  const up = spawnSync('docker', compose, { cwd: root, stdio: 'inherit', windowsHide: true });
+  // Windows installs may expose docker as a .cmd shim; CreateProcess alone
+  // cannot run it. The arguments here are fixed, so a shell command line is
+  // safe and lets both docker.exe and a .cmd shim work.
+  const up = process.platform === 'win32'
+    ? spawnSync(['docker', ...compose].join(' '), { cwd: root, stdio: 'inherit', windowsHide: true, shell: true })
+    : spawnSync('docker', compose, { cwd: root, stdio: 'inherit', windowsHide: true });
   if (up.error || up.status !== 0) {
     console.error(`docker compose up failed: ${up.error ? up.error.message : `exit ${up.status}`}`);
     process.exitCode = up.status || 1;
